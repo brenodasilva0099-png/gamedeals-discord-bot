@@ -65,3 +65,10 @@ O SQLite é salvo em `data/gamedeals.db`. O bot faz backups locais consistentes 
 ## Privacidade
 
 Armazenamos identificadores técnicos de servidores e membros apenas para preferências e alertas. Não armazenamos e-mails, mensagens enviadas pelos membros ou credenciais da conta Steam/Epic. Ao remover o bot de um servidor, os dados locais desse servidor não são excluídos automaticamente nesta versão.
+
+## Visualização de ofertas (v0.3.1)
+
+- Ofertas, pacotes e jogos grátis mostram **2 jogos por página**, com **imagem grande** em vez de miniaturas.
+- Os botões **Anterior/Próxima** editam o mesmo painel privado; não geram várias mensagens.
+- A pesquisa exibe 2 banners grandes e mantém até 10 opções no seletor.
+- Os banners são vinculados aos produtos e dependem das imagens fornecidas por Steam/Epic.

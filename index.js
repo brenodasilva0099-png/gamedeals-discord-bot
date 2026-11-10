@@ -17,6 +17,8 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const POLL_MS = Math.max(15, Number(process.env.POLL_MINUTES) || 30) * 60 * 1000;
 const DEFAULT_DISCOUNT = Math.max(0, Math.min(100, Number(process.env.MIN_DISCOUNT) || 50));
 const WISHLIST_CHECK_LIMIT = Math.max(1, Math.min(30, Number(process.env.WISHLIST_CHECK_LIMIT) || 12));
+const OFFER_PAGE_SIZE = 2; // Dois jogos grandes por pagina: o Discord nao amplia thumbnails automaticamente.
+const SEARCH_PREVIEW_SIZE = 2;
 let pollActive = false;
 let lastManualPoll = 0;
 // Autocomplete choices are only available for slash commands (Discord API limitation).
@@ -37,7 +39,7 @@ function menu() {
   const embed = new EmbedBuilder().setColor(0x274667).setTitle('🎮 GameDeals • Central de jogos')
     .setDescription('**Bem-vindo à sua central de promoções!**\n\nPesquise jogos, consulte descontos, acompanhe preços e veja os jogos grátis. Clique em uma opção abaixo. Sua navegação é privada: outras pessoas não verão suas pesquisas.\n\n🔄 Dados obtidos de fontes externas e atualizados periodicamente. Preços e disponibilidade devem ser confirmados na loja antes da compra.')
     .addFields({name:'📢 Notificações automáticas',value:'São enviadas no canal **#promocoes-de-jogos**.',inline:false})
-    .setFooter({text:'GameDeals • Menu principal • v0.3 • Navegação por botões'});
+    .setFooter({text:'GameDeals • Menu principal • v0.3.1 • Navegação por botões'});
   return { embeds:[embed], components:[
     ...rows(btn('gd:offers','Ofertas',ButtonStyle.Primary,'🏷️'),btn('gd:search','Pesquisar',ButtonStyle.Primary,'🔎'),btn('gd:free','Jogos grátis',ButtonStyle.Success,'🎁'),btn('gd:wishlist','Meus desejos',ButtonStyle.Secondary,'❤️'),btn('gd:history','Histórico',ButtonStyle.Secondary,'📈')),
     ...rows(btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓'))
@@ -102,12 +104,12 @@ function offerEmbed(o) {
 }
 const intro=(title,description) => new EmbedBuilder().setColor(0x274667).setTitle(title).setDescription(description).setFooter({text:'GameDeals • Preços informativos; confirme na loja'});
 function productCard(o, index) {
-  // One embed per game lets each result carry a real cover, unlike the original text list.
+  // Banner grande no embed: thumbnails do Discord nao aumentam ao reduzir a pagina.
   const e=new EmbedBuilder().setColor(o.price_cents===0?0x21b67b:0x1f6bbc)
     .setTitle(`${index}. ${short(o.title,230)}`)
     .setURL(o.url)
     .setDescription(`**${stores.formatMoney(o.price_cents,o.currency)}**${o.discount?`  •  **-${o.discount}%**`:''}\n${shopName(o.source)}${o.kind==='sub'?' • Pacote':''}`);
-  const image=coverFor(o); if(image)e.setThumbnail(image);
+  const image=coverFor(o); if(image)e.setImage(image);
   return e;
 }
 function shopLink(o) {
@@ -116,7 +118,7 @@ function shopLink(o) {
 function searchResultsView(query, results) {
   if (!results.length) return {embeds:[intro('🔎 Nenhum jogo encontrado',`Não encontramos títulos para **${short(query,80)}**. Tente outro nome.`)],components:rows(btn('gd:search','Pesquisar novamente',ButtonStyle.Primary,'🔎'))};
   const list=results.slice(0,10);
-  const embeds=[intro('🔎 Resultados para '+short(query,150),`**${list.length} produto(s)** encontrado(s) na Steam • mostrando capas dos ${Math.min(list.length,5)} primeiros.\nSelecione qualquer resultado na lista abaixo para abrir a ficha completa.`),...list.slice(0,5).map((o,i)=>productCard({offer_key:o.key,...o,price_cents:o.priceCents},i+1))];
+  const embeds=[intro('🔎 Resultados para '+short(query,150),`**${list.length} produto(s)** encontrado(s) na Steam • ${Math.min(list.length,SEARCH_PREVIEW_SIZE)} banners em destaque.\nVocê pode escolher **qualquer um dos resultados** no seletor para abrir a ficha completa.`),...list.slice(0,SEARCH_PREVIEW_SIZE).map((o,i)=>productCard({offer_key:o.key,...o,price_cents:o.priceCents},i+1))];
   return {embeds,components:[
     new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('gd:lookup').setPlaceholder('🎮 Escolha um jogo ou edição').addOptions(list.map(o=>({label:short(o.title,95),description:short(`${stores.formatMoney(o.priceCents,o.currency)}${o.discount?` • -${o.discount}%`:''} • Steam`,100),value:o.key})))),
     ...rows(btn('gd:search','Pesquisar outro jogo',ButtonStyle.Secondary,'🔎'))]};
@@ -171,15 +173,15 @@ async function registerGuildCommand(guild) {
 
 function listView(kind, page=0) {
   const list = kind==='free'?dbApi.freeGames(db,75):kind==='bundles'?dbApi.recentDeals(db,0,75).filter(o=>o.kind==='sub'):dbApi.recentDeals(db,0,75);
-  const actualPage=Math.max(0,Math.min(page,Math.max(0,Math.ceil(list.length/5)-1)));
-  const slice=list.slice(actualPage*5,actualPage*5+5);
+  const actualPage=Math.max(0,Math.min(page,Math.max(0,Math.ceil(list.length/OFFER_PAGE_SIZE)-1)));
+  const slice=list.slice(actualPage*OFFER_PAGE_SIZE,actualPage*OFFER_PAGE_SIZE+OFFER_PAGE_SIZE);
   const titles={free:'🎁 Jogos grátis temporários',offers:'🏷️ Promoções na Steam',bundles:'📦 Pacotes em promoção'};
-  const heading=intro(titles[kind],slice.length?'Capas, preços e descontos consultados nas lojas. Selecione um jogo para ver o banner completo e acompanhar o preço.':'Nenhuma oferta recente nessa categoria. A fonte pode ainda não ter sido consultada.');
-  heading.addFields({name:'📄 Página',value:`${actualPage+1}/${Math.max(1,Math.ceil(list.length/5))}`,inline:true});
+  const heading=intro(titles[kind],slice.length?'Banners grandes, preços e descontos registrados. Exibindo **2 jogos por página**. Selecione um jogo para ver os detalhes ou acompanhar o preço.':'Nenhuma oferta recente nessa categoria. A fonte pode ainda não ter sido consultada.');
+  heading.addFields({name:'📄 Página',value:`${actualPage+1}/${Math.max(1,Math.ceil(list.length/OFFER_PAGE_SIZE))}`,inline:true});
   const buttons=[];
   if(actualPage>0)buttons.push(btn(`gd:page:${kind}:${actualPage-1}`,'Anterior',ButtonStyle.Secondary,'⬅️'));
-  if((actualPage+1)*5<list.length)buttons.push(btn(`gd:page:${kind}:${actualPage+1}`,'Próxima',ButtonStyle.Secondary,'➡️'));
-  const result={embeds:[heading,...slice.map((o,i)=>productCard(o,actualPage*5+i+1))],components:buttons.length?rows(...buttons):[]};
+  if((actualPage+1)*OFFER_PAGE_SIZE<list.length)buttons.push(btn(`gd:page:${kind}:${actualPage+1}`,'Próxima',ButtonStyle.Secondary,'➡️'));
+  const result={embeds:[heading,...slice.map((o,i)=>productCard(o,actualPage*OFFER_PAGE_SIZE+i+1))],components:buttons.length?rows(...buttons):[]};
   if(slice.length) result.components.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('gd:offer').setPlaceholder('🎮 Abrir ficha do jogo').addOptions(slice.map(o=>({label:short(o.title,95),description:short(`${stores.formatMoney(o.price_cents,o.currency)} • ${shopName(o.source)}`,100),value:o.offer_key})))));
   return result;
 }
@@ -263,7 +265,11 @@ async function onButton(i) {
     let n=0;for(const o of sample){try{await c.send({embeds:[offerEmbed(o)],components:[shopLink(o)]});n++;}catch(err){log('Falha no exemplo',err.message);}}
     return i.editReply(`Publiquei ${n} oferta(s) no canal <#${g.deals_channel}>.`);
   }
-  if(id.startsWith('gd:page:')) {const [, ,kind,page]=id.split(':'); return interactionReply(i,listView(kind,Number(page)||0));}
+  if(id.startsWith('gd:page:')) {
+    const [, ,kind,page]=id.split(':');
+    // Edita a mensagem efemera existente para paginar sem acumular respostas.
+    return i.update(listView(kind,Number(page)||0));
+  }
   if(id==='gd:offers' || id==='gd:free' || id==='gd:bundles') return interactionReply(i,listView(id.slice(3)));
   if(id==='gd:help') return interactionReply(i,{embeds:[intro('❓ Como usar','**Pesquisar:** busca por nome com capas e abre a ficha com banner; `/buscar` sugere jogos enquanto você digita.\n**Acompanhar:** salva o produto na sua lista pessoal.\n**Definir alerta:** você recebe DM se o bot identificar um preço igual ou abaixo do limite (quando DMs são permitidas).\n**Jogos grátis:** resgates temporários encontrados na Epic Games.\n**Histórico:** evolução dos preços registrados pelo bot.\n**Comparar lojas:** mostra somente valores realmente consultados para o mesmo título e edição.\n\nNão enviamos notificações de ofertas fictícias nem prometemos cobertura de todas as lojas.')]});
   if(id==='gd:status') {
