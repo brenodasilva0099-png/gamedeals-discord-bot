@@ -9,6 +9,7 @@ const dbApi = require('./db');
 const stores = require('./store');
 const shark = require('./cheapshark');
 const {coverFor} = require('./media');
+const {startLiveServer} = require('./live/server');
 
 if (!process.env.DISCORD_TOKEN || process.env.DISCORD_TOKEN === 'cole_no_painel_da_square_cloud_nao_aqui') {
   console.error('DISCORD_TOKEN ausente. Configure uma variável de ambiente na Square Cloud (não envie o token para GitHub).');
@@ -42,10 +43,11 @@ function menu() {
   const embed = new EmbedBuilder().setColor(0x274667).setTitle('🎮 GameDeals • Central de jogos')
     .setDescription('**Bem-vindo à sua central de promoções!**\n\nPesquise jogos, consulte descontos, acompanhe preços e veja os jogos grátis. Clique em uma opção abaixo. Sua navegação é privada: outras pessoas não verão suas pesquisas.\n\n🔄 Dados obtidos de fontes externas e atualizados periodicamente. Preços e disponibilidade devem ser confirmados na loja antes da compra.')
     .addFields({name:'📢 Notificações automáticas',value:'São enviadas no canal **#promocoes-de-jogos**.',inline:false})
-    .setFooter({text:'GameDeals • Menu principal • v0.4.1 • Navegação por botões'});
+    .setFooter({text:'GameDeals • Menu principal • v0.5.0 • Navegação por botões'});
   return { embeds:[embed], components:[
     ...rows(btn('gd:offers','Ofertas',ButtonStyle.Primary,'🏷️'),btn('gd:search','Pesquisar',ButtonStyle.Primary,'🔎'),btn('gd:free','Jogos grátis',ButtonStyle.Success,'🎁'),btn('gd:wishlist','Meus desejos',ButtonStyle.Secondary,'❤️'),btn('gd:history','Histórico',ButtonStyle.Secondary,'📈')),
-    ...rows(btn('gd:partners','Outras lojas',ButtonStyle.Primary,'🏬'),btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓'))
+    ...rows(btn('gd:partners','Outras lojas',ButtonStyle.Primary,'🏬'),btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓')),
+    ...rows(btn('gd:live','Transmitir tela',ButtonStyle.Primary,'📺'))
   ]};
 }
 
@@ -294,6 +296,11 @@ function canAdmin(i){return Boolean(i.memberPermissions?.has(PermissionFlagsBits
 async function onButton(i) {
   const id=i.customId;
   if(id==='gd:search') return i.showModal(modal('gd:search:submit','Pesquisar nas lojas','Nome do jogo','Ex.: Red Dead Redemption 2'));
+  if(id==='gd:live') {
+    if(process.env.ENABLE_LIVE!=='1')return interactionReply(i,{content:'📺 A GameDeals Activity ainda não foi habilitada na Square Cloud. Configure a publicação web e a Activity no Discord Developer Portal.'});
+    try { if(typeof i.launchActivity!=='function')throw Error('discord.js desatualizado'); return await i.launchActivity(); }
+    catch(error){log('Erro ao abrir Activity:',error.message);return interactionReply(i,{content:'Não consegui abrir a Activity. Confira **Enable Activities**, o mapeamento de URL HTTPS e o status Web da Square Cloud. Mensagem: '+short(error.message,120)});}
+  }
   if (id.startsWith('gd:target:')) {
     const key=id.slice('gd:target:'.length);
     if(!dbApi.getOffer(db,key)) return interactionReply(i,{content:'Oferta não encontrada.'});
@@ -394,7 +401,7 @@ async function onSelect(i) {
     try{return i.editReply(await partnerStorePage(val.slice('store:'.length),0));}
     catch(err){log('Falha ao abrir catalogo da loja',err.message);return i.editReply({content:'Nao foi possivel consultar a loja agora. Tente novamente.',embeds:[],components:rows(btn('gd:stores','Voltar as lojas',ButtonStyle.Primary,'🏬'))});}
   }
-  if(id==='gd:offer' || id==='gd:history:select') {
+  if(id==='gd:offer'  || id==='gd:history:select') {
     const offer=dbApi.getOffer(db,val);
     return interactionReply(i,id==='gd:offer'?(offer?offerView(offer,i.user.id):{content:'Oferta não encontrada.'}):historyView(val));
   }
@@ -554,6 +561,14 @@ async function poll() {
     }
     await refreshWatchlist();
   }finally{pollActive=false;}
+}
+
+if (process.env.ENABLE_LIVE==='1') {
+  try {
+    if(!require('node:fs').existsSync(require('node:path').join(__dirname,'live/public/client.js'))) require('./scripts/build-live');
+    startLiveServer();
+  }
+  catch(error) { console.error('Falha ao iniciar GameDeals Live:',error.stack||error.message); }
 }
 
 client.once('ready',async()=>{

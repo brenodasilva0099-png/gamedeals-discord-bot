@@ -12,5 +12,7 @@ jobs:
         with:
           node-version: '24'
       - run: npm install --ignore-scripts --no-audit
+      - run: npm run build:live
       - run: npm test
       - run: node --check index.js
+      - run: node --check live/server.js

@@ -1,4 +1,4 @@
-# GameDeals Discord Bot
+# GameDeals Discord Bot + Activity Live
 
 Bot **100% Discord**, sem site: menu permanente com botões, pesquisas individuais, lista de desejos e avisos automáticos no canal separado `#promocoes-de-jogos`.
 
@@ -73,27 +73,6 @@ Armazenamos identificadores técnicos de servidores e membros apenas para prefer
 - A pesquisa exibe 2 banners grandes e mantém até 10 opções no seletor.
 - Os banners são vinculados aos produtos e dependem das imagens fornecidas por Steam/Epic.
 
-## Correção de banners (v0.3.2)
-
-- O banner registrado pela API Steam/Epic agora tem prioridade sobre URLs genéricas construídas manualmente.
-- Para produtos Steam sem imagem registrada, usa-se um fallback para `steam/apps/<id>/header.jpg` ou `steam/subs/<id>/header.jpg` conforme o tipo do produto.
-- Inclui testes para imagens oficiais, pacotes `sub`, URLs Steam antigas e lojas externas.
-- Se nem a origem nem o fallback tiverem uma imagem disponível, o Discord poderá mostrar só o título; nunca utilizamos uma imagem inventada de outro jogo.
-
-## Lojas parceiras e comparação (v0.4.0)
-
-- O botão Outras lojas mostra ofertas de revendedoras autorizadas que constem na API CheapShark, como Green Man Gaming, Fanatical, GOG, Humble Store, Gamesplanet, GameBillet e outras, conforme disponibilidade real.
-- Os preços obtidos do CheapShark são em USD (não convertidos para BRL). Steam mantém valores BRL; Epic monitora jogos gratuitos temporários. O botão Comparar lojas agrupa preços por moeda e exige nome/edição correspondentes.
-- Pesquisar consulta Steam e CheapShark, com até dois banners e seletor de até 25 produtos; o comando opcional /buscar usa autocomplete nativo da Steam.
-- Compras de lojas parceiras usam links do tipo https://www.cheapshark.com/redirect?dealID=... , conforme documentação em https://apidocs.cheapshark.com/ . Não trocar por links de afiliado próprios.
-- O monitor automático consulta apenas uma página de até 35 ofertas CheapShark aproximadamente a cada quatro horas; não varre o catálogo inteiro. Após a primeira coleta, publica no máximo seis ofertas novas ou alteradas por ciclo. Busca tem cache de 15 minutos.
-- Lista de desejos: alertas podem usar limites em BRL ou USD por produto. Só jogos Steam monitorados recebem rechecagem individual gradual; ofertas internacionais dependem da amostra futura e podem não ser detectadas.
-- Nuuvem: a API https://docs.nuuvem.com/ exige aprovação de parceiro. Não há preços Nuuvem nesta versão.
-- Instant Gaming: feed ou API com autorização não verificados; não integrada e não classificada como revendedora oficialmente verificada.
-- O CheapShark limita requisições, requer User-Agent e HTTP 429 pode suspender consultas. A integração implementa cache, intervalo e bloqueio temporário.
-- Limite de preço máximo do painel administrativo é em BRL: se configurado, exclui notificações USD para evitar conversões artificiais.
-- O conjunto de 12 testes locais passou. As consultas de rede e a operação real dependem de validação no deploy da Square Cloud.
-
 ## Catalogo por loja (v0.4.1)
 
 - `Outras lojas` abre um seletor com os revendedores autorizados ativos retornados pelo CheapShark.
@@ -101,3 +80,35 @@ Armazenamos identificadores técnicos de servidores e membros apenas para prefer
 - O primeiro clique busca no CheapShark por `storeID`, `onSale=1` e `pageNumber`; cada lote remoto possui 20 ofertas. Os cliques paginam duas por vez e reutilizam o cache (15 minutos), para reduzir requisicoes.
 - As lojas surgem somente quando estiverem ativas na fonte. Catalogos podem ter lacunas e nao sao garantia de disponibilidade para clientes brasileiros.
 - Nuuvem aparece marcada como **integracao pendente**: sua API exige chave de parceiro aprovado. Instant Gaming nao esta integrada por falta de fonte autorizada verificada.
+
+
+## 📺 GameDeals Live v0.5 (nova Discord Activity)
+
+Adaptado do conceito **Void Arena Activity Live**: um painel dentro do Discord assiste à transmissão enquanto a captura ocorre no navegador do PC. **Não é o Go Live nativo do bot** nem um compartilhamento automático de tela. Não é necessário instalar aplicativo local ou criar site público para pesquisa de preços, mas a Activity requer um endereço HTTPS para funcionar.
+
+### Nesta primeira versão
+
+- **📺 Transmitir tela** no painel: abre a Activity oficial associada ao aplicativo GameDeals quando configurada.
+- Captura manual em **Chrome/Edge de desktop**: o usuário clica Iniciar e escolhe a tela/janela; permissão explícita do sistema.
+- WebSocket Relay entre navegador e Activity: funciona sem depender de `RTCPeerConnection` dentro do Discord (limitação do proxy).
+- Codificação WebCodecs **VP8**, fallback **H.264**, máximo **720p / 30 FPS** (opção 480p/15 FPS).
+- Até **4 espectadores por sessão**, no máximo **5 sessões**; transmissão limitada por buffers, descarte de quadros congestionados, keyframes e conexão HTTPS/WSS.
+- Transmissão cessa com **Parar**, ao fechar o navegador ou perder a conexão. Não há gravação de frames em disco ou bancos de dados.
+- Player com **tela cheia**, status de conexão e reconexão automática, estatísticas básicas.
+- Cada sessão da Activity usa o `instanceId` do SDK Discord e autenticação do servidor pela API de instâncias; tokens temporários de transmissão gerados com CSPRNG.
+
+**Limitações importantes:** o áudio do sistema ainda não é transmitido. Compatibilidade real com Discord e latência da Square Cloud precisam de testes no ambiente final. O link de captura deve ser tratado como senha: qualquer pessoa com ele pode iniciar a transmissão se a sala estiver livre. Nesta versão, membros na mesma Activity podem obter o link; não use com desconhecidos. Não há autenticação OAuth individual nem gravação. O relay consome tráfego proporcional à quantidade de espectadores. Não é adequado para dezenas de espectadores em Hobby de 1 GB.
+
+### Publicar na Square Cloud (mesma aplicação, plano Hobby)
+
+1. **Faça backup do banco `data/gamedeals.db`** antes de alterar a modalidade da aplicação existente. No painel da Square Cloud, é preciso habilitar **Publicação Web** para o mesmo app Node.js e obter um domínio `*.squareweb.app`. Um bot hospedado somente como processo em segundo plano não recebe URL pública. Se sua aplicação atual não permitir mudar para web, será necessário recriá-la como app web ou separar bot e relay. Não presuma que uma configuração do arquivo muda automaticamente a modalidade já criada.
+2. Reserve aproximadamente **1024 MB** de RAM para bot + relay, respeitando o total do Hobby. O consumo depende de quantos usuários assistem e deve ser medido nos logs. Na Square Cloud, o servidor usa `PORT` e aceita conexões em `0.0.0.0`.
+3. Defina as variáveis de ambiente no painel: `DISCORD_TOKEN` (existente), `ENABLE_LIVE=1`, `DISCORD_APPLICATION_ID=1569671744803967127` e `ACTIVITY_PUBLIC_URL=https://SEU-SUBDOMINIO.squareweb.app` (substitua pelo domínio REAL retornado pela Square Cloud). Nunca versionar o token. **Não habilite** `LIVE_ALLOW_UNVERIFIED` em produção.
+4. O build do cliente da Activity usa `@discord/embedded-app-sdk` e `esbuild` via script `npm run build:live` (`postinstall` em instalação limpa); o `index.js` também tenta compilar se o bundle estiver ausente. Instale as dependências atualizadas em um deploy limpo (sem `node_modules` antigo).
+5. No [Discord Developer Portal](https://discord.com/developers/applications/1569671744803967127/activities), habilite **Activities** para o aplicativo GameDeals. Em **URL Mappings**, use `PREFIX /` → `TARGET SEU-SUBDOMINIO.squareweb.app` **sem `https://`**. Confira a documentação do portal: o mapeamento do prefixo `/` permite a página e `/live/ws` via proxy.
+6. Reimplante o bot e abra `https://SEU-SUBDOMINIO.squareweb.app/health`: deve retornar `{"ok":true,"service":"GameDeals","live":true}`. No Discord, clique no novo botão **Transmitir tela**.
+7. Dentro da Activity, clique em **Copiar link para transmitir**, abra esse link no Chrome/Edge (fora do iframe do Discord), selecione tela/janela e clique em **Iniciar**.
+
+**Segurança/privacidade:** o endpoint `/api/live/room` só aceita IDs de instâncias reais quando `LIVE_ALLOW_UNVERIFIED` não está ligado. Há rate limit básico por sala e buffers, mas não há verificação de identidade dos participantes individualmente. Não utilize este protótipo com dados confidenciais. O servidor não grava conteúdo, mas usuários que assistem podem gravar por conta própria.
+
+Referências oficiais: [Discord Embedded App SDK](https://discord.com/developers/docs/activities/overview), [Discord Activity Instance API](https://discord.com/developers/docs/activities/development-guides/multiplayer-experience), [Square Cloud WebSocket](https://squarecloud.app/en/learning/apis/how-to-host-a-websocket-server).
