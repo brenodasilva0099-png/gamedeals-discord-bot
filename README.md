@@ -118,3 +118,7 @@ Referências oficiais: [Discord Embedded App SDK](https://discord.com/developers
 Com `ENABLE_LIVE=1`, o bot verifica ao iniciar os comandos **globais** da aplicação. Se não houver comando de tipo `PRIMARY_ENTRY_POINT` (4), registra `iniciar` com handler `DISCORD_LAUNCH_ACTIVITY` (2). Se existir um entry point com outro handler, ajusta o handler para abertura automática. O comando `/buscar` e os menus antigos não são apagados. Em caso de falha, os logs informam a resposta do Discord.
 
 No cliente Discord, **desmarque a substituição manual de URL da Activity** (se estiver apontando para `localhost:3000`). Em produção use Activities > URL Mappings: prefix `/`, target `gamedeals.squareweb.app` (sem `https://`). A propagação do comando global pode levar algum tempo.
+
+## Square Cloud: permitir instalação do esbuild (v0.5.2)
+
+Se a hospedagem mostrar `npm warn install-scripts esbuild@0.28.2 (postinstall: node install.js)`, o `package.json` já permite explicitamente apenas o `esbuild` em `allowScripts`, sem liberar indiscriminadamente scripts de outras dependências. Após novo deploy, verifique se `GameDeals Activity compilada com Embedded App SDK.` aparece nos logs e se o app responde em `/health`. A aprovação cobre também versões do esbuild dentro do intervalo `^0.28.2` se forem resolvidas pela hospedagem.

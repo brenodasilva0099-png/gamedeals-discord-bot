@@ -13,6 +13,7 @@ jobs:
           node-version: '24'
       - run: npm install --ignore-scripts --no-audit
       - run: npm run build:live
+      - run: node -e "const p=require('./package.json');if(p.allowScripts?.esbuild!==true)process.exit(1)"
       - run: npm test
       - run: node --check index.js
       - run: node --check live/server.js
