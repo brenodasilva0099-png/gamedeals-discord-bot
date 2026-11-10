@@ -1,6 +1,6 @@
 {
   "name": "gamedeals-discord-bot",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "GameDeals: bot Discord de promocoes e Activity para transmissao de tela por WebSocket/WebCodecs",
   "main": "index.js",

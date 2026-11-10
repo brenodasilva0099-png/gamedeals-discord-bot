@@ -10,6 +10,7 @@ const stores = require('./store');
 const shark = require('./cheapshark');
 const {coverFor} = require('./media');
 const {startLiveServer} = require('./live/server');
+const {ensureEntryPoint} = require('./live/entry-point');
 
 if (!process.env.DISCORD_TOKEN || process.env.DISCORD_TOKEN === 'cole_no_painel_da_square_cloud_nao_aqui') {
   console.error('DISCORD_TOKEN ausente. Configure uma variável de ambiente na Square Cloud (não envie o token para GitHub).');
@@ -43,7 +44,7 @@ function menu() {
   const embed = new EmbedBuilder().setColor(0x274667).setTitle('🎮 GameDeals • Central de jogos')
     .setDescription('**Bem-vindo à sua central de promoções!**\n\nPesquise jogos, consulte descontos, acompanhe preços e veja os jogos grátis. Clique em uma opção abaixo. Sua navegação é privada: outras pessoas não verão suas pesquisas.\n\n🔄 Dados obtidos de fontes externas e atualizados periodicamente. Preços e disponibilidade devem ser confirmados na loja antes da compra.')
     .addFields({name:'📢 Notificações automáticas',value:'São enviadas no canal **#promocoes-de-jogos**.',inline:false})
-    .setFooter({text:'GameDeals • Menu principal • v0.5.0 • Navegação por botões'});
+    .setFooter({text:'GameDeals • Menu principal • v0.5.1 • Navegação por botões'});
   return { embeds:[embed], components:[
     ...rows(btn('gd:offers','Ofertas',ButtonStyle.Primary,'🏷️'),btn('gd:search','Pesquisar',ButtonStyle.Primary,'🔎'),btn('gd:free','Jogos grátis',ButtonStyle.Success,'🎁'),btn('gd:wishlist','Meus desejos',ButtonStyle.Secondary,'❤️'),btn('gd:history','Histórico',ButtonStyle.Secondary,'📈')),
     ...rows(btn('gd:partners','Outras lojas',ButtonStyle.Primary,'🏬'),btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓')),
@@ -573,6 +574,10 @@ if (process.env.ENABLE_LIVE==='1') {
 
 client.once('ready',async()=>{
   log(`Online como ${client.user.tag} (${client.guilds.cache.size} servidores)`);
+  if(process.env.ENABLE_LIVE==='1') {
+    try { const result = await ensureEntryPoint(client.rest, client.user.id); log(`GameDeals Live: comando de entrada ${result.action} (${result.command?.name || 'iniciar'}).`); }
+    catch(err){ log('GameDeals Live: falha ao registrar comando de entrada:',err.message); }
+  }
   for(const guild of client.guilds.cache.values()){try{await ensureGuild(guild);await registerGuildCommand(guild);}catch(e){log('Falha ao instalar painel',guild.name,e.message);}}
   await poll();
   dbApi.backupDb(db).then(file=>log('Backup local',file)).catch(e=>log('Falha no backup',e.message));

@@ -112,3 +112,9 @@ Adaptado do conceito **Void Arena Activity Live**: um painel dentro do Discord a
 **Segurança/privacidade:** o endpoint `/api/live/room` só aceita IDs de instâncias reais quando `LIVE_ALLOW_UNVERIFIED` não está ligado. Há rate limit básico por sala e buffers, mas não há verificação de identidade dos participantes individualmente. Não utilize este protótipo com dados confidenciais. O servidor não grava conteúdo, mas usuários que assistem podem gravar por conta própria.
 
 Referências oficiais: [Discord Embedded App SDK](https://discord.com/developers/docs/activities/overview), [Discord Activity Instance API](https://discord.com/developers/docs/activities/development-guides/multiplayer-experience), [Square Cloud WebSocket](https://squarecloud.app/en/learning/apis/how-to-host-a-websocket-server).
+
+## Entrada no App Launcher (v0.5.1)
+
+Com `ENABLE_LIVE=1`, o bot verifica ao iniciar os comandos **globais** da aplicação. Se não houver comando de tipo `PRIMARY_ENTRY_POINT` (4), registra `iniciar` com handler `DISCORD_LAUNCH_ACTIVITY` (2). Se existir um entry point com outro handler, ajusta o handler para abertura automática. O comando `/buscar` e os menus antigos não são apagados. Em caso de falha, os logs informam a resposta do Discord.
+
+No cliente Discord, **desmarque a substituição manual de URL da Activity** (se estiver apontando para `localhost:3000`). Em produção use Activities > URL Mappings: prefix `/`, target `gamedeals.squareweb.app` (sem `https://`). A propagação do comando global pode levar algum tempo.
