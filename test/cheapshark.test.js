@@ -51,3 +51,17 @@ test('SQLite mantém banner já conhecido quando consulta não traz imagem',()=>
  assert.equal(getOffer(db,a.key).image,a.image);
  db.close();fs.rmSync(dir,{recursive:true,force:true});
 });
+const {storeBrowseParams,STORE_PAGE_SIZE}=require('../cheapshark');
+test('Pagina de catalogo filtra apenas uma loja e ofertas em promocao',()=>{
+  const p=storeBrowseParams('3',2);
+  assert.equal(p.get('storeID'),'3');
+  assert.equal(p.get('onSale'),'1');
+  assert.equal(p.get('pageNumber'),'2');
+  assert.equal(Number(p.get('pageSize')),STORE_PAGE_SIZE);
+  assert.equal(p.get('sortBy'),'DealRating');
+});
+test('Rejeita parametros que poderiam consultar lojas nao validadas ou paginas excessivas',()=>{
+  assert.throws(()=>storeBrowseParams('3,7',0));
+  assert.throws(()=>storeBrowseParams('3',-1));
+  assert.throws(()=>storeBrowseParams('3',101));
+});

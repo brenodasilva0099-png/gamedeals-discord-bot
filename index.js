@@ -21,6 +21,7 @@ const DEFAULT_DISCOUNT = Math.max(0, Math.min(100, Number(process.env.MIN_DISCOU
 const WISHLIST_CHECK_LIMIT = Math.max(1, Math.min(30, Number(process.env.WISHLIST_CHECK_LIMIT) || 12));
 const OFFER_PAGE_SIZE = 2; // Dois jogos grandes por pagina: o Discord nao amplia thumbnails automaticamente.
 const SEARCH_PREVIEW_SIZE = 2;
+const STORE_CARDS_PER_PAGE = 2;
 let pollActive = false;
 let lastManualPoll = 0;
 // Autocomplete choices are only available for slash commands (Discord API limitation).
@@ -41,7 +42,7 @@ function menu() {
   const embed = new EmbedBuilder().setColor(0x274667).setTitle('🎮 GameDeals • Central de jogos')
     .setDescription('**Bem-vindo à sua central de promoções!**\n\nPesquise jogos, consulte descontos, acompanhe preços e veja os jogos grátis. Clique em uma opção abaixo. Sua navegação é privada: outras pessoas não verão suas pesquisas.\n\n🔄 Dados obtidos de fontes externas e atualizados periodicamente. Preços e disponibilidade devem ser confirmados na loja antes da compra.')
     .addFields({name:'📢 Notificações automáticas',value:'São enviadas no canal **#promocoes-de-jogos**.',inline:false})
-    .setFooter({text:'GameDeals • Menu principal • v0.4.0 • Navegação por botões'});
+    .setFooter({text:'GameDeals • Menu principal • v0.4.1 • Navegação por botões'});
   return { embeds:[embed], components:[
     ...rows(btn('gd:offers','Ofertas',ButtonStyle.Primary,'🏷️'),btn('gd:search','Pesquisar',ButtonStyle.Primary,'🔎'),btn('gd:free','Jogos grátis',ButtonStyle.Success,'🎁'),btn('gd:wishlist','Meus desejos',ButtonStyle.Secondary,'❤️'),btn('gd:history','Histórico',ButtonStyle.Secondary,'📈')),
     ...rows(btn('gd:partners','Outras lojas',ButtonStyle.Primary,'🏬'),btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓'))
@@ -176,6 +177,56 @@ async function registerGuildCommand(guild) {
 }
 
 
+// Consulta paginada sob demanda: nao baixa o catalogo inteiro e usa o cache CheapShark.
+async function partnerStoresView() {
+  const available=await shark.allowedStores();
+  const options=available.map(s=>({label:s.name,description:'Jogos em promocao • valores em USD',value:`store:${s.slug}`}));
+  options.push({label:'Nuuvem — integracao pendente',description:'API exige autorizacao de parceiro • sem precos ainda',value:'pending:nuuvem'});
+  options.push({label:'Instant Gaming — nao integrada',description:'Sem fonte de ofertas autorizada confirmada',value:'pending:instantgaming'});
+  return {content:'',embeds:[intro('🏬 Escolha a loja',
+    'Selecione a loja para ver **os jogos que estao em promocao nela**, com banner, preco, desconto e paginacao.\n\n'+
+    '**Lojas internacionais:** dados fornecidos pelo CheapShark em **US$**, sujeitos a regiao e checkout. '+
+    'Nuuvem e Instant Gaming ainda nao possuem consulta automatica no GameDeals.\n\n'+
+    `Lojas disponiveis agora: **${available.length}**.`)],
+    components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+      .setCustomId('gd:store:select').setPlaceholder('🏬 Escolha uma loja para abrir o catalogo')
+      .addOptions(options.slice(0,25)))]};
+}
+function pendingStoreView(slug) {
+  if(slug==='nuuvem')return {content:'',embeds:[intro('🇧🇷 Nuuvem — aguardando integracao',
+    'A API oficial da Nuuvem exige acesso de parceiro aprovado. Ainda **nao temos dados de ofertas Nuuvem**. '+
+    'Nao mostraremos promocoes de outras lojas como se fossem da Nuuvem.\n\n'+
+    '[Abrir loja oficial](https://www.nuuvem.com/)')],components:rows(btn('gd:stores','Voltar as lojas',ButtonStyle.Primary,'⬅️'))};
+  return {content:'',embeds:[intro('Instant Gaming — sem integracao',
+    'Ainda nao temos uma fonte autorizada e verificada para listar ofertas da Instant Gaming. '+
+    'A loja nao esta incluida no catalogo automatizado do GameDeals.')],components:rows(btn('gd:stores','Voltar as lojas',ButtonStyle.Primary,'⬅️'))};
+}
+async function partnerStorePage(slug, page=0) {
+  const p=Math.max(0,Math.min(1000,Number.isInteger(page)?page:0));
+  const remotePage=Math.floor(p*STORE_CARDS_PER_PAGE/shark.STORE_PAGE_SIZE);
+  const offset=p*STORE_CARDS_PER_PAGE%shark.STORE_PAGE_SIZE;
+  const {store,offers,hasNextPage}=await shark.browseStore(slug,remotePage);
+  for(const o of offers)dbApi.upsertOffer(db,o);
+  const slice=offers.slice(offset,offset+STORE_CARDS_PER_PAGE);
+  const nextPage=offset+STORE_CARDS_PER_PAGE<offers.length?p+1:
+    hasNextPage?(remotePage+1)*(shark.STORE_PAGE_SIZE/STORE_CARDS_PER_PAGE):null;
+  const title=`🏬 ${store.name} • ofertas`;
+  const heading=intro(title,slice.length?
+    '**Catalogo de jogos em promocao da loja escolhida.**\n'+
+    'Precos em **US$** (CheapShark), com 2 banners por pagina. Verifique ativacao regional e total no checkout.':
+    'Nenhuma oferta encontrada nesta pagina. Use Anterior ou escolha outra loja.');
+  heading.addFields({name:'📄 Pagina',value:String(p+1),inline:true});
+  const nav=[];
+  if(p>0)nav.push(btn(`gd:storepage:${slug}:${p-1}`,'Anterior',ButtonStyle.Secondary,'⬅️'));
+  if(nextPage!==null && nextPage<=1000)nav.push(btn(`gd:storepage:${slug}:${nextPage}`,'Proxima',ButtonStyle.Primary,'➡️'));
+  nav.push(btn('gd:stores','Outras lojas',ButtonStyle.Secondary,'🏬'));
+  const components=rows(...nav);
+  if(slice.length)components.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+    .setCustomId('gd:offer').setPlaceholder('🎮 Ver jogo, preco e compra')
+    .addOptions(slice.map(o=>({label:short(o.title,95),description:short(`${stores.formatMoney(o.priceCents,o.currency)} • -${o.discount}% • ${store.name}`,100),value:o.key})))));
+  return {content:'',embeds:[heading,...slice.map((o,i)=>productCard({...o,offer_key:o.key,price_cents:o.priceCents},p*STORE_CARDS_PER_PAGE+i+1))],components};
+}
+
 function listView(kind, page=0) {
   const list = kind==='free'?dbApi.freeGames(db,75):kind==='partners'?db.prepare("SELECT * FROM offers WHERE source LIKE 'cs:%' AND discount>0 AND seen_at>? ORDER BY discount DESC, seen_at DESC LIMIT 75").all(Date.now()-7*86400000):kind==='bundles'?dbApi.recentDeals(db,0,75).filter(o=>o.kind==='sub'):dbApi.recentDeals(db,0,75);
   const actualPage=Math.max(0,Math.min(page,Math.max(0,Math.ceil(list.length/OFFER_PAGE_SIZE)-1)));
@@ -275,12 +326,24 @@ async function onButton(i) {
     let n=0;for(const o of sample){try{await c.send({embeds:[offerEmbed(o)],components:[shopLink(o)]});n++;}catch(err){log('Falha no exemplo',err.message);}}
     return i.editReply(`Publiquei ${n} oferta(s) no canal <#${g.deals_channel}>.`);
   }
+  if(id==='gd:partners' || id==='gd:stores') {
+    if(id==='gd:stores')await i.deferUpdate();
+    else await i.deferReply({flags:MessageFlags.Ephemeral});
+    try{return i.editReply(await partnerStoresView());}
+    catch(err){log('Falha ao listar lojas',err.message);return i.editReply({embeds:[intro('🏬 Lojas indisponiveis','A fonte de ofertas nao respondeu agora. Tente novamente.' )],components:rows(btn('gd:stores','Tentar novamente',ButtonStyle.Primary,'🔄'))});}
+  }
+  if(id.startsWith('gd:storepage:')) {
+    const [, ,slug,rawPage]=id.split(':');
+    await i.deferUpdate();
+    try{return i.editReply(await partnerStorePage(slug,Number(rawPage)));}
+    catch(err){log('Falha na paginacao da loja',slug,err.message);return i.editReply({content:'Nao foi possivel atualizar este catalogo agora.',embeds:[],components:rows(btn('gd:stores','Escolher outra loja',ButtonStyle.Primary,'🏬'))});}
+  }
   if(id.startsWith('gd:page:')) {
     const [, ,kind,page]=id.split(':');
     // Edita a mensagem efemera existente para paginar sem acumular respostas.
     return i.update(listView(kind,Number(page)||0));
   }
-  if(id==='gd:offers' || id==='gd:free' || id==='gd:bundles' || id==='gd:partners') return interactionReply(i,listView(id.slice(3)));
+  if(id==='gd:offers' || id==='gd:free' || id==='gd:bundles') return interactionReply(i,listView(id.slice(3)));
   if(id==='gd:help') return interactionReply(i,{embeds:[intro('❓ Como usar','**Pesquisar:** busca na Steam e em lojas autorizadas com capas e abre a ficha com banner; `/buscar` sugere jogos enquanto você digita.\n**Acompanhar:** salva o produto na sua lista pessoal.\n**Definir alerta:** você recebe DM se o bot identificar um preço igual ou abaixo do limite (quando DMs são permitidas).\n**Jogos grátis:** resgates temporários encontrados na Epic Games.\n**Histórico:** evolução dos preços registrados pelo bot.\n**Comparar lojas:** mostra somente valores realmente consultados para o mesmo título e edição.\n\nOutras lojas vêm do CheapShark em USD. Nuuvem e Instant Gaming ainda não estão conectadas. Não enviamos ofertas fictícias nem prometemos cobertura de todas as lojas.')]});
   if(id==='gd:status') {
     const states=db.prepare('SELECT * FROM sources').all();
@@ -324,6 +387,13 @@ async function onButton(i) {
 
 async function onSelect(i) {
   const id=i.customId,val=i.values[0];
+  if(id==='gd:store:select') {
+    await i.deferUpdate();
+    if(val.startsWith('pending:'))return i.editReply(pendingStoreView(val.slice('pending:'.length)));
+    if(!val.startsWith('store:'))return i.editReply({content:'Loja nao reconhecida.',embeds:[],components:rows(btn('gd:stores','Escolher loja',ButtonStyle.Primary,'🏬'))});
+    try{return i.editReply(await partnerStorePage(val.slice('store:'.length),0));}
+    catch(err){log('Falha ao abrir catalogo da loja',err.message);return i.editReply({content:'Nao foi possivel consultar a loja agora. Tente novamente.',embeds:[],components:rows(btn('gd:stores','Voltar as lojas',ButtonStyle.Primary,'🏬'))});}
+  }
   if(id==='gd:offer' || id==='gd:history:select') {
     const offer=dbApi.getOffer(db,val);
     return interactionReply(i,id==='gd:offer'?(offer?offerView(offer,i.user.id):{content:'Oferta não encontrada.'}):historyView(val));

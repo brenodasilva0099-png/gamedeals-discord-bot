@@ -93,3 +93,11 @@ Armazenamos identificadores técnicos de servidores e membros apenas para prefer
 - O CheapShark limita requisições, requer User-Agent e HTTP 429 pode suspender consultas. A integração implementa cache, intervalo e bloqueio temporário.
 - Limite de preço máximo do painel administrativo é em BRL: se configurado, exclui notificações USD para evitar conversões artificiais.
 - O conjunto de 12 testes locais passou. As consultas de rede e a operação real dependem de validação no deploy da Square Cloud.
+
+## Catalogo por loja (v0.4.1)
+
+- `Outras lojas` abre um seletor com os revendedores autorizados ativos retornados pelo CheapShark.
+- Escolhendo Green Man Gaming, GOG, Fanatical ou outra loja ativa, o bot consulta **so as ofertas daquela loja**, com 2 banners por pagina, preco USD, desconto, link e paginacao.
+- O primeiro clique busca no CheapShark por `storeID`, `onSale=1` e `pageNumber`; cada lote remoto possui 20 ofertas. Os cliques paginam duas por vez e reutilizam o cache (15 minutos), para reduzir requisicoes.
+- As lojas surgem somente quando estiverem ativas na fonte. Catalogos podem ter lacunas e nao sao garantia de disponibilidade para clientes brasileiros.
+- Nuuvem aparece marcada como **integracao pendente**: sua API exige chave de parceiro aprovado. Instant Gaming nao esta integrada por falta de fonte autorizada verificada.

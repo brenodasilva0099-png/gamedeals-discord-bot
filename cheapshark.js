@@ -19,6 +19,7 @@ const AUTHORIZED=Object.freeze({
 const STORE_CACHE_MS=24*60*60*1000;
 const QUERY_CACHE_MS=15*60*1000;
 const BROWSE_CACHE_MS=4*60*60*1000;
+const STORE_PAGE_SIZE=20; // paginas API, 10 telas Discord de 2 ofertas
 const cache=new Map();
 let nextAllowed=0;
 let blockedUntil=0;
@@ -89,6 +90,24 @@ async function requestDeals(params){
   if(!Array.isArray(list))throw Error('Formato inesperado das ofertas CheapShark');
   return list.map(x=>normalizeDeal(x,storeMap)).filter(Boolean);
 }
+function storeBrowseParams(storeId, page=0) {
+  const id=String(storeId);
+  if(!/^\d{1,8}$/.test(id))throw Error('ID de loja invalido');
+  if(!Number.isInteger(page)||page<0||page>100)throw Error('Pagina invalida');
+  return new URLSearchParams({storeID:id,onSale:'1',pageSize:String(STORE_PAGE_SIZE),pageNumber:String(page),sortBy:'DealRating'});
+}
+async function browseStore(slug,page=0){
+  if(!Object.prototype.hasOwnProperty.call(AUTHORIZED,slug))throw Error('Loja nao autorizada');
+  const active=await allowedStores();
+  const store=active.find(s=>s.slug===slug);
+  if(!store)throw Error('Esta loja nao esta disponivel na fonte de ofertas');
+  return cached(`browse:${slug}:${page}`,QUERY_CACHE_MS,async()=>{
+    const data=await getJson(`${API}/deals?${storeBrowseParams(store.id,page)}`);
+    if(!Array.isArray(data))throw Error('Catalogo da loja indisponivel');
+    const map=new Map([[store.id,store]]);
+    return {store,offers:data.map(item=>normalizeDeal(item,map)).filter(Boolean),hasNextPage:data.length===STORE_PAGE_SIZE};
+  });
+}
 async function featured(){
   return cached('featured',BROWSE_CACHE_MS,()=>requestDeals(new URLSearchParams({onSale:'1',pageSize:'35',pageNumber:'0',sortBy:'DealRating'})));
 }
@@ -97,4 +116,4 @@ async function searchByTitle(title){
   if(clean.length<2)return [];
   return cached('title:'+clean.toLowerCase(),QUERY_CACHE_MS,()=>requestDeals(new URLSearchParams({title:clean,pageSize:'40',pageNumber:'0',sortBy:'DealRating'})));
 }
-module.exports={AUTHORIZED,storeKey,sourceName,usdCents,normalizeDeal,allowedStores,featured,searchByTitle};
+module.exports={AUTHORIZED,storeKey,sourceName,usdCents,normalizeDeal,allowedStores,featured,searchByTitle,browseStore,storeBrowseParams,STORE_PAGE_SIZE};
