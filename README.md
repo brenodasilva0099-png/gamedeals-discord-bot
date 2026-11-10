@@ -79,3 +79,17 @@ Armazenamos identificadores técnicos de servidores e membros apenas para prefer
 - Para produtos Steam sem imagem registrada, usa-se um fallback para `steam/apps/<id>/header.jpg` ou `steam/subs/<id>/header.jpg` conforme o tipo do produto.
 - Inclui testes para imagens oficiais, pacotes `sub`, URLs Steam antigas e lojas externas.
 - Se nem a origem nem o fallback tiverem uma imagem disponível, o Discord poderá mostrar só o título; nunca utilizamos uma imagem inventada de outro jogo.
+
+## Lojas parceiras e comparação (v0.4.0)
+
+- O botão Outras lojas mostra ofertas de revendedoras autorizadas que constem na API CheapShark, como Green Man Gaming, Fanatical, GOG, Humble Store, Gamesplanet, GameBillet e outras, conforme disponibilidade real.
+- Os preços obtidos do CheapShark são em USD (não convertidos para BRL). Steam mantém valores BRL; Epic monitora jogos gratuitos temporários. O botão Comparar lojas agrupa preços por moeda e exige nome/edição correspondentes.
+- Pesquisar consulta Steam e CheapShark, com até dois banners e seletor de até 25 produtos; o comando opcional /buscar usa autocomplete nativo da Steam.
+- Compras de lojas parceiras usam links do tipo https://www.cheapshark.com/redirect?dealID=... , conforme documentação em https://apidocs.cheapshark.com/ . Não trocar por links de afiliado próprios.
+- O monitor automático consulta apenas uma página de até 35 ofertas CheapShark aproximadamente a cada quatro horas; não varre o catálogo inteiro. Após a primeira coleta, publica no máximo seis ofertas novas ou alteradas por ciclo. Busca tem cache de 15 minutos.
+- Lista de desejos: alertas podem usar limites em BRL ou USD por produto. Só jogos Steam monitorados recebem rechecagem individual gradual; ofertas internacionais dependem da amostra futura e podem não ser detectadas.
+- Nuuvem: a API https://docs.nuuvem.com/ exige aprovação de parceiro. Não há preços Nuuvem nesta versão.
+- Instant Gaming: feed ou API com autorização não verificados; não integrada e não classificada como revendedora oficialmente verificada.
+- O CheapShark limita requisições, requer User-Agent e HTTP 429 pode suspender consultas. A integração implementa cache, intervalo e bloqueio temporário.
+- Limite de preço máximo do painel administrativo é em BRL: se configurado, exclui notificações USD para evitar conversões artificiais.
+- O conjunto de 12 testes locais passou. As consultas de rede e a operação real dependem de validação no deploy da Square Cloud.

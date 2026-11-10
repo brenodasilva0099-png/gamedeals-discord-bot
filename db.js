@@ -27,7 +27,7 @@ function upsertOffer(db, o) {
   const now = Date.now();
   db.prepare(`INSERT INTO offers(offer_key,title,source,kind,url,image,currency,original_cents,price_cents,discount,expires_at,seen_at,changed_at)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(offer_key) DO UPDATE SET title=excluded.title,url=excluded.url,image=excluded.image,currency=excluded.currency,original_cents=excluded.original_cents,price_cents=excluded.price_cents,discount=excluded.discount,expires_at=excluded.expires_at,seen_at=excluded.seen_at,changed_at=CASE WHEN offers.price_cents != excluded.price_cents THEN excluded.changed_at ELSE offers.changed_at END`).run(o.key,o.title,o.source,o.kind,o.url,o.image,o.currency,o.originalCents,o.priceCents,o.discount,o.expiresAt,now,now);
+    ON CONFLICT(offer_key) DO UPDATE SET title=excluded.title,url=excluded.url,image=COALESCE(excluded.image,offers.image),currency=excluded.currency,original_cents=excluded.original_cents,price_cents=excluded.price_cents,discount=excluded.discount,expires_at=excluded.expires_at,seen_at=excluded.seen_at,changed_at=CASE WHEN offers.price_cents != excluded.price_cents THEN excluded.changed_at ELSE offers.changed_at END`).run(o.key,o.title,o.source,o.kind,o.url,o.image,o.currency,o.originalCents,o.priceCents,o.discount,o.expiresAt,now,now);
   const changed = !previous || previous.price_cents !== o.priceCents;
   if (changed) db.prepare('INSERT INTO price_history(offer_key,price_cents,currency,recorded_at) VALUES(?,?,?,?)').run(o.key,o.priceCents,o.currency,now);
   return changed;

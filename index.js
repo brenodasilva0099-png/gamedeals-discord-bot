@@ -7,6 +7,7 @@ const {
 } = require('discord.js');
 const dbApi = require('./db');
 const stores = require('./store');
+const shark = require('./cheapshark');
 const {coverFor} = require('./media');
 
 if (!process.env.DISCORD_TOKEN || process.env.DISCORD_TOKEN === 'cole_no_painel_da_square_cloud_nao_aqui') {
@@ -40,10 +41,10 @@ function menu() {
   const embed = new EmbedBuilder().setColor(0x274667).setTitle('🎮 GameDeals • Central de jogos')
     .setDescription('**Bem-vindo à sua central de promoções!**\n\nPesquise jogos, consulte descontos, acompanhe preços e veja os jogos grátis. Clique em uma opção abaixo. Sua navegação é privada: outras pessoas não verão suas pesquisas.\n\n🔄 Dados obtidos de fontes externas e atualizados periodicamente. Preços e disponibilidade devem ser confirmados na loja antes da compra.')
     .addFields({name:'📢 Notificações automáticas',value:'São enviadas no canal **#promocoes-de-jogos**.',inline:false})
-    .setFooter({text:'GameDeals • Menu principal • v0.3.2 • Navegação por botões'});
+    .setFooter({text:'GameDeals • Menu principal • v0.4.0 • Navegação por botões'});
   return { embeds:[embed], components:[
     ...rows(btn('gd:offers','Ofertas',ButtonStyle.Primary,'🏷️'),btn('gd:search','Pesquisar',ButtonStyle.Primary,'🔎'),btn('gd:free','Jogos grátis',ButtonStyle.Success,'🎁'),btn('gd:wishlist','Meus desejos',ButtonStyle.Secondary,'❤️'),btn('gd:history','Histórico',ButtonStyle.Secondary,'📈')),
-    ...rows(btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓'))
+    ...rows(btn('gd:partners','Outras lojas',ButtonStyle.Primary,'🏬'),btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓'))
   ]};
 }
 
@@ -80,11 +81,11 @@ async function ensureGuild(guild) {
 }
 
 function short(s,n=80){return String(s||'').length>n?String(s).slice(0,n-1)+'…':String(s||'');}
-function shopName(source) { return source==='steam'?'Steam':source==='epic'?'Epic Games':String(source); }
+function shopName(source) { return source==='steam'?'Steam':source==='epic'?'Epic Games':(shark.sourceName(source) || String(source)); }
 function offerEmbed(o) {
   const price=stores.formatMoney(o.price_cents,o.currency);
   const e = new EmbedBuilder().setTitle(short(o.title,240)).setURL(o.url).setColor(o.price_cents===0?0x34bf80:0x2388fa)
-    .setDescription(`${o.price_cents===0?'🎁 **GRÁTIS POR TEMPO LIMITADO**':`💰 **${price}**`}${o.discount?`  •  **-${o.discount}%**`:''}\n[🛒 Abrir página oficial da oferta](${o.url})`)
+    .setDescription(`${o.price_cents===0?'🎁 **GRÁTIS POR TEMPO LIMITADO**':`💰 **${price}**`}${o.discount?`  •  **-${o.discount}%**`:''}\n[🛒 Abrir oferta](${o.url})${o.source.startsWith('cs:')?'\n*Preço em USD informado pelo CheapShark. Link via CheapShark; verifique região e valor no checkout.*':''}`)
     .addFields(
       {name:'🏬 Loja',value:shopName(o.source),inline:true},
       {name:'💳 Preço original',value:stores.formatMoney(o.original_cents,o.currency),inline:true},
@@ -101,7 +102,7 @@ function productCard(o, index) {
   const e=new EmbedBuilder().setColor(o.price_cents===0?0x21b67b:0x1f6bbc)
     .setTitle(`${index}. ${short(o.title,230)}`)
     .setURL(o.url)
-    .setDescription(`**${stores.formatMoney(o.price_cents,o.currency)}**${o.discount?`  •  **-${o.discount}%**`:''}\n${shopName(o.source)}${o.kind==='sub'?' • Pacote':''}`);
+    .setDescription(`**${stores.formatMoney(o.price_cents,o.currency)}**${o.discount?`  •  **-${o.discount}%**`:''}\n${shopName(o.source)}${o.kind==='sub'?' • Pacote':''}${o.source.startsWith('cs:')?' • via CheapShark (USD)':''}`);
   const image=coverFor(o); if(image)e.setImage(image);
   return e;
 }
@@ -110,11 +111,22 @@ function shopLink(o) {
 }
 function searchResultsView(query, results) {
   if (!results.length) return {embeds:[intro('🔎 Nenhum jogo encontrado',`Não encontramos títulos para **${short(query,80)}**. Tente outro nome.`)],components:rows(btn('gd:search','Pesquisar novamente',ButtonStyle.Primary,'🔎'))};
-  const list=results.slice(0,10);
-  const embeds=[intro('🔎 Resultados para '+short(query,150),`**${list.length} produto(s)** encontrado(s) na Steam • ${Math.min(list.length,SEARCH_PREVIEW_SIZE)} banners em destaque.\nVocê pode escolher **qualquer um dos resultados** no seletor para abrir a ficha completa.`),...list.slice(0,SEARCH_PREVIEW_SIZE).map((o,i)=>productCard({offer_key:o.key,...o,price_cents:o.priceCents},i+1))];
+  const list=results.slice(0,25);
+  const embeds=[intro('🔎 Resultados para '+short(query,150),`**${list.length} oferta(s)** encontradas em lojas consultadas • ${Math.min(list.length,SEARCH_PREVIEW_SIZE)} banners em destaque.\nPreços em **R$** (Steam) ou **US$** (outras lojas), sem conversão fictícia. Escolha um resultado no seletor.`),...list.slice(0,SEARCH_PREVIEW_SIZE).map((o,i)=>productCard({offer_key:o.key,...o,price_cents:o.priceCents},i+1))];
   return {embeds,components:[
-    new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('gd:lookup').setPlaceholder('🎮 Escolha um jogo ou edição').addOptions(list.map(o=>({label:short(o.title,95),description:short(`${stores.formatMoney(o.priceCents,o.currency)}${o.discount?` • -${o.discount}%`:''} • Steam`,100),value:o.key})))),
+    new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('gd:lookup').setPlaceholder('🎮 Escolha um jogo ou edição').addOptions(list.map(o=>({label:short(o.title,95),description:short(`${stores.formatMoney(o.priceCents,o.currency)}${o.discount?` • -${o.discount}%`:''} • ${shopName(o.source)}`,100),value:o.key})))),
     ...rows(btn('gd:search','Pesquisar outro jogo',ButtonStyle.Secondary,'🔎'))]};
+}
+async function findAllGames(query) {
+  const results=await Promise.allSettled([findGames(query),shark.searchByTitle(query)]);
+  const steam=results[0].status==='fulfilled'?results[0].value:[];
+  const partner=results[1].status==='fulfilled'?results[1].value:[];
+  if(results.every(r=>r.status==='rejected'))throw Error('Fontes de pesquisa indisponíveis');
+  for(const o of partner)dbApi.upsertOffer(db,o);
+  // Alterna fontes para que a segunda capa não seja sempre da mesma loja.
+  const output=[];const a=steam.slice(0,10),b=partner.slice(0,15);
+  while(a.length||b.length) {if(a.length)output.push(a.shift());if(b.length)output.push(b.shift());}
+  return output.slice(0,25);
 }
 async function findGames(query, timeout = 15_000) {
   const results=await stores.searchSteam(query, timeout);
@@ -153,7 +165,7 @@ async function onBuscarCommand(i) {
     return i.editReply(offerView(offer,i.user.id));
   }
   if(value.length<2)return i.editReply('Digite ao menos 2 letras para pesquisar.');
-  try {return i.editReply(searchResultsView(value,await findGames(value)));}
+  try {return i.editReply(searchResultsView(value,await findAllGames(value)));}
   catch(err){log('Falha na pesquisa:',err.message);return i.editReply('Não foi possível consultar a Steam agora. Tente novamente.');}
 }
 async function registerGuildCommand(guild) {
@@ -165,11 +177,11 @@ async function registerGuildCommand(guild) {
 
 
 function listView(kind, page=0) {
-  const list = kind==='free'?dbApi.freeGames(db,75):kind==='bundles'?dbApi.recentDeals(db,0,75).filter(o=>o.kind==='sub'):dbApi.recentDeals(db,0,75);
+  const list = kind==='free'?dbApi.freeGames(db,75):kind==='partners'?db.prepare("SELECT * FROM offers WHERE source LIKE 'cs:%' AND discount>0 AND seen_at>? ORDER BY discount DESC, seen_at DESC LIMIT 75").all(Date.now()-7*86400000):kind==='bundles'?dbApi.recentDeals(db,0,75).filter(o=>o.kind==='sub'):dbApi.recentDeals(db,0,75);
   const actualPage=Math.max(0,Math.min(page,Math.max(0,Math.ceil(list.length/OFFER_PAGE_SIZE)-1)));
   const slice=list.slice(actualPage*OFFER_PAGE_SIZE,actualPage*OFFER_PAGE_SIZE+OFFER_PAGE_SIZE);
-  const titles={free:'🎁 Jogos grátis temporários',offers:'🏷️ Promoções na Steam',bundles:'📦 Pacotes em promoção'};
-  const heading=intro(titles[kind],slice.length?'Banners grandes, preços e descontos registrados. Exibindo **2 jogos por página**. Selecione um jogo para ver os detalhes ou acompanhar o preço.':'Nenhuma oferta recente nessa categoria. A fonte pode ainda não ter sido consultada.');
+  const titles={free:'🎁 Jogos grátis temporários',offers:'🏷️ Promoções na Steam',partners:'🏬 Promoções de outras lojas',bundles:'📦 Pacotes em promoção'};
+  const heading=intro(titles[kind],slice.length?`Banners grandes e descontos registrados. **2 jogos por página**. ${kind==='partners'?'Ofertas internacionais em **USD**, via CheapShark. Confirmar disponibilidade no Brasil e preço final.':''} Selecione um jogo para detalhes e alertas.`:'Nenhuma oferta recente nessa categoria. A fonte pode ainda não ter sido consultada.');
   heading.addFields({name:'📄 Página',value:`${actualPage+1}/${Math.max(1,Math.ceil(list.length/OFFER_PAGE_SIZE))}`,inline:true});
   const buttons=[];
   if(actualPage>0)buttons.push(btn(`gd:page:${kind}:${actualPage-1}`,'Anterior',ButtonStyle.Secondary,'⬅️'));
@@ -206,13 +218,18 @@ function compareView(key) {
   const product=dbApi.getOffer(db,key);
   if(!product)return {content:'Produto não encontrado. Faça uma nova pesquisa.'};
   const normalized=stores.cleanName(product.title);
-  // Strict normalized-title matching avoids suggesting that different games/editions are equivalent.
-  const catalog=db.prepare('SELECT * FROM offers WHERE seen_at>? ORDER BY price_cents ASC LIMIT 250').all(Date.now()-7*86400000);
-  const matches=catalog.filter(o=>stores.cleanName(o.title)===normalized && o.kind===product.kind && o.currency===product.currency);
-  const unique=[...new Map([product,...matches].map(o=>[o.offer_key,o])).values()].sort((a,b)=>a.price_cents-b.price_cents);
-  const lines=unique.map(o=>`**${shopName(o.source)}** — ${stores.formatMoney(o.price_cents,o.currency)}${o.discount?`  •  -${o.discount}%`:''}\n[Ver oferta](${o.url})`).join('\n\n');
-  const missing=unique.length<2?'\n\n⚠️ Ainda não há preços comparáveis de outra loja para esta mesma edição. O GameDeals não inventa valores da Epic ou de revendedores.':'\n\nPreços de fontes consultadas em datas diferentes; confirme no checkout.';
-  return {embeds:[intro('🏬 Comparação disponível • '+short(product.title,130),lines+missing)],components:[shopLink(product)]};
+  // Títulos e edições estritamente iguais. Não presumir que versões diferentes sejam equivalentes.
+  const catalog=db.prepare('SELECT * FROM offers WHERE seen_at>? LIMIT 500').all(Date.now()-7*86400000);
+  const matches=catalog.filter(o=>stores.cleanName(o.title)===normalized && o.kind===product.kind);
+  const unique=[...new Map([product,...matches].map(o=>[o.offer_key,o])).values()];
+  const currencies=[...new Set(unique.map(o=>o.currency))];
+  const description=currencies.map(currency=>{
+    const list=unique.filter(o=>o.currency===currency).sort((a,b)=>a.price_cents-b.price_cents);
+    return `**${currency==='BRL'?'🇧🇷 Preços brasileiros (BRL)':'🌎 Valores internacionais (USD)'}**\n`+
+      list.slice(0,12).map(o=>`**${shopName(o.source)}** — ${stores.formatMoney(o.price_cents,o.currency)}${o.discount?` • -${o.discount}%`:''}\n[Consultar oferta](${o.url})`).join('\n\n');
+  }).join('\n\n');
+  const note=unique.length<2?'\n\n⚠️ Ainda não há outra oferta com título e edição correspondentes.':'\n\n*Moedas diferentes não são comparáveis diretamente. Preços podem variar por região e data. Confirme o checkout.*';
+  return {embeds:[intro('🏬 Comparar • '+short(product.title,130),short(description+note,3900))],components:[shopLink(product)]};
 }
 
 function modal(id,title,label,placeholder) { return new ModalBuilder().setCustomId(id).setTitle(short(title,42)).addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('value').setLabel(label).setPlaceholder(placeholder).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(80))); }
@@ -225,16 +242,16 @@ function canAdmin(i){return Boolean(i.memberPermissions?.has(PermissionFlagsBits
 
 async function onButton(i) {
   const id=i.customId;
-  if(id==='gd:search') return i.showModal(modal('gd:search:submit','Pesquisar jogos na Steam','Nome do jogo','Ex.: Red Dead Redemption 2'));
+  if(id==='gd:search') return i.showModal(modal('gd:search:submit','Pesquisar nas lojas','Nome do jogo','Ex.: Red Dead Redemption 2'));
   if (id.startsWith('gd:target:')) {
     const key=id.slice('gd:target:'.length);
     if(!dbApi.getOffer(db,key)) return interactionReply(i,{content:'Oferta não encontrada.'});
-    return i.showModal(modal(`gd:targetsave:${key}`,'Alerta personalizado','Preço máximo em reais (ex.: 49,90)','49,90'));
+    return i.showModal(modal(`gd:targetsave:${key}`,'Alerta personalizado',`Preço máximo em ${dbApi.getOffer(db,key).currency}`,'49,90 ou 9.99'));
   }
   if (id==='gd:settings') {
     if(!canAdmin(i)) return interactionReply(i,{content:'Somente membros com Gerenciar Servidor podem alterar estas configurações.'});
     const g=dbApi.getGuild(db,i.guildId);
-    return interactionReply(i,{embeds:[intro('⚙️ Administração',`Notificações: **${g?.enabled?'Ligadas':'Desligadas'}**\nDesconto mínimo: **${g?.min_discount||0}%**\nLimite de preço: **${g?.max_price_cents===null?'Sem limite':stores.formatMoney(g.max_price_cents,'BRL')}**\n\nEscolha uma opção abaixo.`)],components:rows(btn('gd:toggle','Ligar/desligar avisos',ButtonStyle.Primary,'🔔'),btn('gd:discount','Alterar desconto mínimo',ButtonStyle.Secondary,'🏷️'),btn('gd:sample','Publicar 3 ofertas',ButtonStyle.Secondary,'📢'),btn('gd:pricecap','Limite de preço',ButtonStyle.Secondary,'💰'),btn('gd:refresh','Atualizar agora',ButtonStyle.Secondary,'🔄'))});
+    return interactionReply(i,{embeds:[intro('⚙️ Administração',`Notificações: **${g?.enabled?'Ligadas':'Desligadas'}**\nDesconto mínimo: **${g?.min_discount||0}%**\nLimite de preço: **${g?.max_price_cents===null?'Sem limite':stores.formatMoney(g.max_price_cents,'BRL')}** *(limite de preço em R$ não se aplica aos valores USD; nesse caso, anúncios USD ficam ocultos quando há limite)*\n\nEscolha uma opção abaixo.`)],components:rows(btn('gd:toggle','Ligar/desligar avisos',ButtonStyle.Primary,'🔔'),btn('gd:discount','Alterar desconto mínimo',ButtonStyle.Secondary,'🏷️'),btn('gd:sample','Publicar 3 ofertas',ButtonStyle.Secondary,'📢'),btn('gd:pricecap','Limite de preço',ButtonStyle.Secondary,'💰'),btn('gd:refresh','Atualizar agora',ButtonStyle.Secondary,'🔄'))});
   }
   if(id==='gd:toggle' && canAdmin(i)) {
     const g=dbApi.getGuild(db,i.guildId); db.prepare('UPDATE guilds SET enabled=? WHERE guild_id=?').run(g?.enabled?0:1,i.guildId);
@@ -263,11 +280,11 @@ async function onButton(i) {
     // Edita a mensagem efemera existente para paginar sem acumular respostas.
     return i.update(listView(kind,Number(page)||0));
   }
-  if(id==='gd:offers' || id==='gd:free' || id==='gd:bundles') return interactionReply(i,listView(id.slice(3)));
-  if(id==='gd:help') return interactionReply(i,{embeds:[intro('❓ Como usar','**Pesquisar:** busca por nome com capas e abre a ficha com banner; `/buscar` sugere jogos enquanto você digita.\n**Acompanhar:** salva o produto na sua lista pessoal.\n**Definir alerta:** você recebe DM se o bot identificar um preço igual ou abaixo do limite (quando DMs são permitidas).\n**Jogos grátis:** resgates temporários encontrados na Epic Games.\n**Histórico:** evolução dos preços registrados pelo bot.\n**Comparar lojas:** mostra somente valores realmente consultados para o mesmo título e edição.\n\nNão enviamos notificações de ofertas fictícias nem prometemos cobertura de todas as lojas.')]});
+  if(id==='gd:offers' || id==='gd:free' || id==='gd:bundles' || id==='gd:partners') return interactionReply(i,listView(id.slice(3)));
+  if(id==='gd:help') return interactionReply(i,{embeds:[intro('❓ Como usar','**Pesquisar:** busca na Steam e em lojas autorizadas com capas e abre a ficha com banner; `/buscar` sugere jogos enquanto você digita.\n**Acompanhar:** salva o produto na sua lista pessoal.\n**Definir alerta:** você recebe DM se o bot identificar um preço igual ou abaixo do limite (quando DMs são permitidas).\n**Jogos grátis:** resgates temporários encontrados na Epic Games.\n**Histórico:** evolução dos preços registrados pelo bot.\n**Comparar lojas:** mostra somente valores realmente consultados para o mesmo título e edição.\n\nOutras lojas vêm do CheapShark em USD. Nuuvem e Instant Gaming ainda não estão conectadas. Não enviamos ofertas fictícias nem prometemos cobertura de todas as lojas.')]});
   if(id==='gd:status') {
     const states=db.prepare('SELECT * FROM sources').all();
-    const status=states.length?states.map(s=>`${s.source==='steam'?'Steam':'Epic'}: ${s.last_error?'⚠️ '+short(s.last_error,90):'✅ OK'} • ${s.item_count} itens • <t:${Math.floor(s.checked_at/1000)}:R>`).join('\n'):'Coleta ainda não iniciada.';
+    const status=states.length?states.map(s=>`${s.source==='steam'?'Steam':s.source==='epic'?'Epic':'Outras lojas (CheapShark)'}: ${s.last_error?'⚠️ '+short(s.last_error,90):'✅ OK'} • ${s.item_count} itens • <t:${Math.floor(s.checked_at/1000)}:R>`).join('\n'):'Coleta ainda não iniciada.';
     return interactionReply(i,{embeds:[intro('📡 Estado do monitor',`${status}\n\nVerificações gerais a cada **${POLL_MS/60000} minutos**, com até **${WISHLIST_CHECK_LIMIT}** jogos acompanhados revisados por ciclo. Os horários refletem a coleta, não necessariamente a atualização da loja.`)]});
   }
   if(id==='gd:wishlist') {
@@ -281,7 +298,19 @@ async function onButton(i) {
     const list=db.prepare('SELECT offer_key,title FROM offers ORDER BY changed_at DESC LIMIT 25').all();
     return interactionReply(i,{embeds:[intro('📈 Histórico de preços','Escolha um jogo para consultar o histórico registrado pelo nosso bot.')],components:list.length?[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('gd:history:select').setPlaceholder('Selecione um jogo').addOptions(list.map(o=>({label:short(o.title,90),value:o.offer_key}))))]:[]});
   }
-  if(id.startsWith('gd:compare:'))return interactionReply(i,compareView(id.slice('gd:compare:'.length)));
+  if(id.startsWith('gd:compare:')) {
+    const key=id.slice('gd:compare:'.length),product=dbApi.getOffer(db,key);
+    if(!product)return interactionReply(i,{content:'Oferta não encontrada.'});
+    await i.deferReply({flags:MessageFlags.Ephemeral});
+    let warning='';
+    try {
+      const linked=await shark.searchByTitle(product.title);
+      for(const o of linked)if(stores.cleanName(o.title)===stores.cleanName(product.title))dbApi.upsertOffer(db,o);
+    } catch(e){warning='\n\n⚠️ Não foi possível atualizar os preços de outras lojas agora.';log('Comparação CheapShark',e.message);}
+    const result=compareView(key);
+    if(warning && result.embeds)result.embeds[0].setDescription(result.embeds[0].data.description+warning);
+    return i.editReply(result);
+  }
   if(id.startsWith('gd:history:')) return interactionReply(i,historyView(id.slice('gd:history:'.length)));
   if(id.startsWith('gd:watch:')) {
     const key=id.slice('gd:watch:'.length),offer=dbApi.getOffer(db,key);if(!offer)return interactionReply(i,{content:'Oferta não encontrada.'});
@@ -300,6 +329,10 @@ async function onSelect(i) {
     return interactionReply(i,id==='gd:offer'?(offer?offerView(offer,i.user.id):{content:'Oferta não encontrada.'}):historyView(val));
   }
   if(id==='gd:lookup') {
+    if(val.startsWith('cs:')) {
+      const offer=dbApi.getOffer(db,val);
+      return interactionReply(i,offer?offerView(offer,i.user.id):{content:'Essa oferta não está mais no cache. Pesquise novamente.'});
+    }
     const [,type,rawId]=val.split(':');const idNum=Number(rawId);
     if(!['app','sub'].includes(type)||!Number.isSafeInteger(idNum))return interactionReply(i,{content:'Produto inválido.'});
     const key=`steam:${type}:${idNum}`;
@@ -328,14 +361,14 @@ async function onModal(i) {
   const id=i.customId;const value=i.fields.getTextInputValue('value')?.trim();
   if(id==='gd:search:submit') {
     await i.deferReply({flags:MessageFlags.Ephemeral});
-    try {return i.editReply(searchResultsView(value,await findGames(value)));}
+    try {return i.editReply(searchResultsView(value,await findAllGames(value)));}
     catch(err){return i.editReply(`Não consegui consultar a Steam agora (${short(err.message,120)}). Tente novamente mais tarde.`);}
   }
   if(id.startsWith('gd:targetsave:')) {
     const key=id.slice('gd:targetsave:'.length);const offer=dbApi.getOffer(db,key);
     if(!offer)return interactionReply(i,{content:'Oferta não encontrada.'});
-    if(offer.currency!=='BRL')return interactionReply(i,{content:'Alertas por valor em reais estão disponíveis apenas para preços em BRL.'});
-    const normalized=value.replace(/\s/g,'').replace(/^R\$/i,'').replace(/\./g,'').replace(',','.');
+    if(!['BRL','USD'].includes(offer.currency))return interactionReply(i,{content:'Esta moeda ainda não é suportada para alertas.'});
+    const normalized=value.replace(/\s/g,'').replace(/^(R\$|US\$|\$)/i,'').replace(',','.');
     const parsed=Number(normalized);
     if(!/^[0-9]+(?:\.[0-9]{1,2})?$/.test(normalized)||!Number.isFinite(parsed)||parsed<0||parsed>100000)return interactionReply(i,{content:'Valor inválido. Exemplo: 49,90'});
     const cents=Math.round(parsed*100);
@@ -357,7 +390,7 @@ client.on('interactionCreate',async i=>{
 async function announce(o) {
   const guilds=db.prepare('SELECT * FROM guilds WHERE enabled=1 AND deals_channel IS NOT NULL').all();
   for(const g of guilds) {
-    if(o.source==='steam' && o.discount<g.min_discount)continue;
+    if(o.source!=='epic' && o.discount<g.min_discount)continue;
     if(g.max_price_cents!==null && (o.currency!=='BRL'||o.priceCents>g.max_price_cents))continue;
     if(o.source==='epic' && o.price_cents!==0)continue;
     if(db.prepare('SELECT 1 FROM notifications WHERE guild_id=? AND offer_key=? AND price_cents=?').get(g.guild_id,o.key,o.priceCents))continue;
@@ -372,7 +405,7 @@ async function announce(o) {
 }
 
 async function notifyWatchers(o) {
-  if(o.currency!=='BRL')return;
+  if(!['BRL','USD'].includes(o.currency))return;
   const users=db.prepare('SELECT user_id FROM watchlist WHERE offer_key=? AND target_cents IS NOT NULL AND target_cents>=?').all(o.key,o.priceCents);
   for(const {user_id} of users){
     if(db.prepare('SELECT 1 FROM dm_notifications WHERE user_id=? AND offer_key=? AND price_cents=?').get(user_id,o.key,o.priceCents))continue;
@@ -424,6 +457,30 @@ async function poll() {
         log(`Fonte ${source}: ${offers.length} produtos, ${updated} preços novos/alterados`);
       }catch(err){dbApi.setSource(db,source,0,err.message);log('Falha na fonte',source,err.message);}
       await new Promise(resolve=>setTimeout(resolve,500));
+    }
+    // Uma única página pequena a cada 4 horas: sem varrer o catálogo completo.
+    const last=db.prepare("SELECT checked_at,last_error FROM sources WHERE source='cheapshark'").get();
+    const age=Date.now()-(last?.checked_at||0);
+    if(age>=(last?.last_error?60:240)*60*1000) {
+      try {
+        const offers=await shark.featured();let changedCount=0;let sent=0;
+        for(const o of offers) {
+          if(dbApi.upsertOffer(db,o)){
+            changedCount++;
+            if(initializedSources.has('cheapshark')) {
+              if(sent<6){await announce(o);sent++;}
+              await notifyWatchers(o);
+            }
+          }
+        }
+        dbApi.setSource(db,'cheapshark',offers.length);
+        if(!initializedSources.has('cheapshark')) {
+          db.prepare("INSERT INTO meta(key,value) VALUES('source_init:cheapshark','yes') ON CONFLICT(key) DO UPDATE SET value='yes'").run();
+          initializedSources.add('cheapshark');
+          log('CheapShark iniciado sem publicar em massa os descontos anteriores.');
+        }
+        log(`CheapShark: ${offers.length} produtos na amostra, ${changedCount} novos preços, ${sent} avisos.`);
+      } catch(e){dbApi.setSource(db,'cheapshark',0,e.message);log('Falha no CheapShark',e.message);}
     }
     await refreshWatchlist();
   }finally{pollActive=false;}
