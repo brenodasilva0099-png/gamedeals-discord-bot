@@ -7,6 +7,7 @@ const {
 } = require('discord.js');
 const dbApi = require('./db');
 const stores = require('./store');
+const {coverFor} = require('./media');
 
 if (!process.env.DISCORD_TOKEN || process.env.DISCORD_TOKEN === 'cole_no_painel_da_square_cloud_nao_aqui') {
   console.error('DISCORD_TOKEN ausente. Configure uma variável de ambiente na Square Cloud (não envie o token para GitHub).');
@@ -39,7 +40,7 @@ function menu() {
   const embed = new EmbedBuilder().setColor(0x274667).setTitle('🎮 GameDeals • Central de jogos')
     .setDescription('**Bem-vindo à sua central de promoções!**\n\nPesquise jogos, consulte descontos, acompanhe preços e veja os jogos grátis. Clique em uma opção abaixo. Sua navegação é privada: outras pessoas não verão suas pesquisas.\n\n🔄 Dados obtidos de fontes externas e atualizados periodicamente. Preços e disponibilidade devem ser confirmados na loja antes da compra.')
     .addFields({name:'📢 Notificações automáticas',value:'São enviadas no canal **#promocoes-de-jogos**.',inline:false})
-    .setFooter({text:'GameDeals • Menu principal • v0.3.1 • Navegação por botões'});
+    .setFooter({text:'GameDeals • Menu principal • v0.3.2 • Navegação por botões'});
   return { embeds:[embed], components:[
     ...rows(btn('gd:offers','Ofertas',ButtonStyle.Primary,'🏷️'),btn('gd:search','Pesquisar',ButtonStyle.Primary,'🔎'),btn('gd:free','Jogos grátis',ButtonStyle.Success,'🎁'),btn('gd:wishlist','Meus desejos',ButtonStyle.Secondary,'❤️'),btn('gd:history','Histórico',ButtonStyle.Secondary,'📈')),
     ...rows(btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓'))
@@ -80,14 +81,6 @@ async function ensureGuild(guild) {
 
 function short(s,n=80){return String(s||'').length>n?String(s).slice(0,n-1)+'…':String(s||'');}
 function shopName(source) { return source==='steam'?'Steam':source==='epic'?'Epic Games':String(source); }
-function steamBanner(offer) {
-  const id = /^steam:app:(\d+)$/.exec(offer.offer_key || offer.key || '');
-  return id ? `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${id[1]}/header.jpg` : null;
-}
-function coverFor(o) {
-  const url = steamBanner(o) || o.image;
-  return url && /^https:\/\//i.test(url) ? url : null;
-}
 function offerEmbed(o) {
   const price=stores.formatMoney(o.price_cents,o.currency);
   const e = new EmbedBuilder().setTitle(short(o.title,240)).setURL(o.url).setColor(o.price_cents===0?0x34bf80:0x2388fa)

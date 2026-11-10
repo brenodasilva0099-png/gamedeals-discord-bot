@@ -72,3 +72,10 @@ Armazenamos identificadores técnicos de servidores e membros apenas para prefer
 - Os botões **Anterior/Próxima** editam o mesmo painel privado; não geram várias mensagens.
 - A pesquisa exibe 2 banners grandes e mantém até 10 opções no seletor.
 - Os banners são vinculados aos produtos e dependem das imagens fornecidas por Steam/Epic.
+
+## Correção de banners (v0.3.2)
+
+- O banner registrado pela API Steam/Epic agora tem prioridade sobre URLs genéricas construídas manualmente.
+- Para produtos Steam sem imagem registrada, usa-se um fallback para `steam/apps/<id>/header.jpg` ou `steam/subs/<id>/header.jpg` conforme o tipo do produto.
+- Inclui testes para imagens oficiais, pacotes `sub`, URLs Steam antigas e lojas externas.
+- Se nem a origem nem o fallback tiverem uma imagem disponível, o Discord poderá mostrar só o título; nunca utilizamos uma imagem inventada de outro jogo.
