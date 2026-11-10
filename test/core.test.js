@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
 const {normalizeSteamItem,epicOffersFromResponse,formatMoney}=require('../store');
-const {openDb,upsertOffer,recentDeals,freeGames}=require('../db');
+const {openDb,upsertOffer,recentDeals,freeGames,backupDb}=require('../db');
 
 test('promoção Steam guarda centavos sem arredondar',()=>{
   const o=normalizeSteamItem({id:123,type:'app',name:'Jogo Teste',original_price:9999,final_price:4999,discount_percent:50,currency:'BRL'});
@@ -35,4 +35,28 @@ test('SQLite não duplica históricos para preço inalterado',()=>{
   assert.equal(upsertOffer(db,{...offer,priceCents:900}),true);
   assert.equal(db.prepare('SELECT count(*) AS n FROM price_history').get().n,2);
   db.close(); fs.rmSync(dir,{recursive:true,force:true});
+});
+
+test('migração preserva guilds de versões anteriores',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'game-deals-migration-'));
+  const first=openDb(dir);
+  first.exec('DROP TABLE guilds; CREATE TABLE guilds (guild_id TEXT PRIMARY KEY, menu_channel TEXT, deals_channel TEXT, menu_message TEXT, min_discount INTEGER NOT NULL DEFAULT 50, enabled INTEGER NOT NULL DEFAULT 1);');
+  first.prepare('INSERT INTO guilds(guild_id) VALUES(?)').run('1234'); first.close();
+  const updated=openDb(dir);
+  assert.equal(updated.prepare('SELECT max_price_cents FROM guilds WHERE guild_id=?').get('1234').max_price_cents,null);
+  updated.prepare('UPDATE guilds SET max_price_cents=5000 WHERE guild_id=?').run('1234');
+  assert.equal(updated.prepare('SELECT max_price_cents FROM guilds WHERE guild_id=?').get('1234').max_price_cents,5000);
+  updated.close(); fs.rmSync(dir,{recursive:true,force:true});
+});
+
+test('backup diário do SQLite mantém dados do banco',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'game-deals-backup-'));
+  const db=openDb(dir);
+  db.prepare('INSERT INTO meta(key,value) VALUES(?,?)').run('backup_teste','ok');
+  const name=await backupDb(db,dir);
+  assert.ok(fs.existsSync(name));
+  const {DatabaseSync}=require('node:sqlite');
+  const cloned=new DatabaseSync(name);
+  assert.equal(cloned.prepare('SELECT value FROM meta WHERE key=?').get('backup_teste').value,'ok');
+  cloned.close();db.close();fs.rmSync(dir,{recursive:true,force:true});
 });

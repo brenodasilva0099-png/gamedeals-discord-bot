@@ -1,13 +1,13 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
+const { DatabaseSync, backup } = require('node:sqlite');
 
 function openDb(dir = process.env.DATA_DIR || path.join(process.cwd(), 'data')) {
   fs.mkdirSync(dir, { recursive: true });
   const db = new DatabaseSync(path.join(dir, 'gamedeals.db'));
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-  CREATE TABLE IF NOT EXISTS guilds (guild_id TEXT PRIMARY KEY, menu_channel TEXT, deals_channel TEXT, menu_message TEXT, min_discount INTEGER NOT NULL DEFAULT 50, enabled INTEGER NOT NULL DEFAULT 1);
+  CREATE TABLE IF NOT EXISTS guilds (guild_id TEXT PRIMARY KEY, menu_channel TEXT, deals_channel TEXT, menu_message TEXT, min_discount INTEGER NOT NULL DEFAULT 50, max_price_cents INTEGER, enabled INTEGER NOT NULL DEFAULT 1);
   CREATE TABLE IF NOT EXISTS offers (offer_key TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, url TEXT NOT NULL, image TEXT, currency TEXT NOT NULL, original_cents INTEGER NOT NULL, price_cents INTEGER NOT NULL, discount INTEGER NOT NULL, expires_at TEXT, seen_at INTEGER NOT NULL, changed_at INTEGER NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_offers_recent ON offers(seen_at DESC);
   CREATE TABLE IF NOT EXISTS price_history (id INTEGER PRIMARY KEY AUTOINCREMENT, offer_key TEXT NOT NULL, price_cents INTEGER NOT NULL, currency TEXT NOT NULL, recorded_at INTEGER NOT NULL);
@@ -17,6 +17,8 @@ function openDb(dir = process.env.DATA_DIR || path.join(process.cwd(), 'data')) 
   CREATE TABLE IF NOT EXISTS dm_notifications (user_id TEXT NOT NULL, offer_key TEXT NOT NULL, price_cents INTEGER NOT NULL, delivered_at INTEGER NOT NULL, PRIMARY KEY(user_id, offer_key, price_cents));
   CREATE TABLE IF NOT EXISTS sources (source TEXT PRIMARY KEY, checked_at INTEGER, last_error TEXT, item_count INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);`);
+  const columns = db.prepare('PRAGMA table_info(guilds)').all().map(col => col.name);
+  if (!columns.includes('max_price_cents')) db.exec('ALTER TABLE guilds ADD COLUMN max_price_cents INTEGER');
   return db;
 }
 
@@ -38,4 +40,13 @@ function watchList(db, userId) { return db.prepare('SELECT w.offer_key,w.target_
 function setSource(db, source, count, error = null) { db.prepare('INSERT INTO sources(source,checked_at,last_error,item_count) VALUES(?,?,?,?) ON CONFLICT(source) DO UPDATE SET checked_at=excluded.checked_at,last_error=excluded.last_error,item_count=excluded.item_count').run(source,Date.now(),error,count); }
 function getGuild(db,id) { return db.prepare('SELECT * FROM guilds WHERE guild_id=?').get(id); }
 function setGuild(db,id,menuChannel,dealsChannel,menuMessage) { db.prepare('INSERT INTO guilds(guild_id,menu_channel,deals_channel,menu_message) VALUES(?,?,?,?) ON CONFLICT(guild_id) DO UPDATE SET menu_channel=excluded.menu_channel,deals_channel=excluded.deals_channel,menu_message=excluded.menu_message').run(id,menuChannel,dealsChannel,menuMessage); }
-module.exports={openDb,upsertOffer,getOffer,recentDeals,freeGames,watchList,setSource,getGuild,setGuild};
+async function backupDb(db, dir=process.env.DATA_DIR || path.join(process.cwd(),'data')) {
+  const folder=path.join(dir,'backups');
+  fs.mkdirSync(folder,{recursive:true});
+  const file=path.join(folder,`gamedeals-${new Date().toISOString().slice(0,10)}.db`);
+  await backup(db,file);
+  const copies=fs.readdirSync(folder).filter(n=>/^gamedeals-\d{4}-\d{2}-\d{2}\.db$/.test(n)).sort().reverse();
+  for(const old of copies.slice(7))fs.rmSync(path.join(folder,old),{force:true});
+  return file;
+}
+module.exports={openDb,upsertOffer,getOffer,recentDeals,freeGames,watchList,setSource,getGuild,setGuild,backupDb};

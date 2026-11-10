@@ -1,6 +1,6 @@
 {
   "name": "gamedeals-discord-bot",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Bot Discord para promoções Steam e jogos grátis Epic, com painel persistente.",
   "main": "index.js",

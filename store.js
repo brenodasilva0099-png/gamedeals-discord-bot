@@ -51,11 +51,11 @@ async function steamSpecials() {
   return data.specials.items.map(normalizeSteamItem).filter(x => x && x.discount > 0);
 }
 
-async function searchSteam(term) {
+async function searchSteam(term, timeout = 15000) {
   const q = String(term || '').trim().slice(0, 80);
   if (q.length < 2) return [];
   const params = new URLSearchParams({ term: q, cc: 'br', l: 'brazilian' });
-  const data = await getJson(`https://store.steampowered.com/api/storesearch/?${params}`);
+  const data = await getJson(`https://store.steampowered.com/api/storesearch/?${params}`, timeout);
   return (Array.isArray(data?.items) ? data.items : []).map(normalizeSteamItem).filter(Boolean).slice(0, 10);
 }
 
