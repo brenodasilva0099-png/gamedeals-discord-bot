@@ -1,0 +1,78 @@
+name: Deploy GameDeals na Square Cloud
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gamedeals-squarecloud-production
+  cancel-in-progress: false
+
+jobs:
+  validar:
+    name: Testar e compilar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Instalar dependencias
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Compilar GameDeals Live
+        run: npm run build:live
+      - name: Testar
+        run: npm test
+      - name: Conferir sintaxe e bundle
+        run: |
+          node --check index.js
+          node --check live/server.js
+          test -s live/public/client.js
+
+  deploy:
+    name: Publicar no GameDeals-Bot
+    needs: validar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Compilar Activity para publicacao
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm run build:live
+          test -s live/public/client.js
+      - name: Empacotar so os arquivos da aplicacao
+        run: |
+          zip -q -r project.zip \
+            squarecloud.app package.json \
+            index.js db.js store.js cheapshark.js media.js \
+            live scripts
+          unzip -l project.zip
+          if unzip -Z1 project.zip | grep -E '(^|/)(data|node_modules|\.env)(/|$)'; then
+            echo "::error::O pacote contem arquivos nao permitidos."
+            exit 1
+          fi
+      - name: Confirmar credenciais
+        env:
+          SQUARECLOUD_API_KEY: ${{ secrets.SQUARECLOUD_API_KEY }}
+          SQUARECLOUD_APP_ID: ${{ vars.SQUARECLOUD_APP_ID }}
+        run: |
+          if [ -z "$SQUARECLOUD_API_KEY" ]; then
+            echo "::error::Cadastre SQUARECLOUD_API_KEY nos secrets do GitHub."
+            exit 1
+          fi
+          if [ -z "$SQUARECLOUD_APP_ID" ]; then
+            echo "::error::Cadastre SQUARECLOUD_APP_ID nas variables do GitHub (ID da Square Cloud)."
+            exit 1
+          fi
+      - name: Deploy oficial na Square Cloud
+        uses: squarecloudofc/github-action@v2
+        with:
+          token: ${{ secrets.SQUARECLOUD_API_KEY }}
+          command: commit --file project.zip ${{ vars.SQUARECLOUD_APP_ID }} --restart

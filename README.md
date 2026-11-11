@@ -122,3 +122,25 @@ No cliente Discord, **desmarque a substituição manual de URL da Activity** (se
 ## Square Cloud: permitir instalação do esbuild (v0.5.2)
 
 Se a hospedagem mostrar `npm warn install-scripts esbuild@0.28.2 (postinstall: node install.js)`, o `package.json` já permite explicitamente apenas o `esbuild` em `allowScripts`, sem liberar indiscriminadamente scripts de outras dependências. Após novo deploy, verifique se `GameDeals Activity compilada com Embedded App SDK.` aparece nos logs e se o app responde em `/health`. A aprovação cobre também versões do esbuild dentro do intervalo `^0.28.2` se forem resolvidas pela hospedagem.
+
+## Deploy via GitHub Actions (alternativa ao webhook)
+
+O workflow `.github/workflows/deploy.yml` utiliza a action oficial `squarecloudofc/github-action@v2`. Ele testa e compila a Activity em GitHub Actions e faz deploy no GameDeals-Bot existente, sem depender da integração automática via webhook.
+
+### Ativação das credenciais
+
+Em **GitHub > Repositório GameDeals > Settings > Secrets and variables > Actions**:
+
+1. Na aba **Secrets**, crie `SQUARECLOUD_API_KEY` com a API key da sua conta Square Cloud. Não coloque a chave no código, em chats ou nos logs.
+2. Na aba **Variables**, crie `SQUARECLOUD_APP_ID` com o ID da aplicação **GameDeals-Bot na Square Cloud**. **Não** use o Discord Application ID.
+3. Em **Actions > Deploy GameDeals na Square Cloud > Run workflow**, selecione a branch `main` e execute. Os próximos pushes em `main` também farão deploy.
+
+O primeiro workflow pode falhar na etapa de credenciais até que ambas sejam cadastradas. Não requer mudar a configuração GitHub App existente.
+
+### Proteção de dados
+
+O pacote `project.zip` contém apenas os arquivos da aplicação e a Activity compilada. Não inclui `data/`, `.env`, `node_modules/` nem outros arquivos privados. A Square Cloud documenta que `commit --file ... --restart` sobrescreve apenas os arquivos enviados e conserva os demais. **Antes do primeiro uso, confira se o SQLite e seus backups estão persistentes na Square Cloud.**
+
+O workflow não define, altera nem copia `DISCORD_TOKEN`, `ENABLE_LIVE` ou `ACTIVITY_PUBLIC_URL`. Se o deploy automático original voltar a funcionar, evite deixar dois fluxos publicando o app simultaneamente.
+
+Referências: https://squarecloud.app/en/resources/github-action e https://squarecloud.app/pt-br/learning/deploy/deploy-with-github-actions .
