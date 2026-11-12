@@ -144,3 +144,9 @@ O pacote `project.zip` contém apenas os arquivos da aplicação e a Activity co
 O workflow não define, altera nem copia `DISCORD_TOKEN`, `ENABLE_LIVE` ou `ACTIVITY_PUBLIC_URL`. Se o deploy automático original voltar a funcionar, evite deixar dois fluxos publicando o app simultaneamente.
 
 Referências: https://squarecloud.app/en/resources/github-action e https://squarecloud.app/pt-br/learning/deploy/deploy-with-github-actions .
+
+## GameDeals Live em hospedagem Web separada, com o bot original intacto
+
+Se o bot estiver como worker e a Activity for hospedada em outra aplicação Web, defina **no GameDeals-Bot** `ENABLE_LIVE=1` e `LIVE_EXTERNAL=1`. Assim o botão **Transmitir tela** e o comando global de entrada continuam registrados, mas o worker não executa mais o relay HTTP/WebSocket que não possui domínio. Na nova aplicação Web, `live/server.js` precisa ser iniciado via um arquivo de entrada próprio (`startLiveServer()`), com publicação Web habilitada no primeiro envio.
+
+No Hobby de 1 GB, 512 MB + 512 MB cabem na cota total, mas só reduza a memória alocada ao bot após verificar o pico real do processo, com folga suficiente. O arquivo `squarecloud.app` do bot ainda mostra memória de 1024 MB; a alocação vigente deve ser verificada/alterada diretamente no painel.
