@@ -3,8 +3,8 @@ const crypto = require('node:crypto');
 
 const MAX_ROOMS = 5;
 const MAX_VIEWERS = 4;
-const MAX_FRAME_BYTES = 256 * 1024;
-const MAX_BUFFERED = 1024 * 1024;
+const MAX_FRAME_BYTES = 1024 * 1024;
+const MAX_BUFFERED = 4 * 1024 * 1024;
 const ROOM_TTL = 2 * 60 * 60 * 1000;
 const randomToken = () => crypto.randomBytes(24).toString('base64url');
 const validInstance = id => typeof id === 'string' && /^[a-zA-Z0-9_-]{12,128}$/.test(id);

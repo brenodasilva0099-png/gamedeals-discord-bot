@@ -44,6 +44,7 @@ function startLiveServer({port=PORT,logger=console}={}) {
       if(pathname==='/' || pathname==='/live' || pathname==='/live/')return html(res,'activity.html');
       if(pathname==='/live/broadcast')return html(res,'broadcast.html');
       if(pathname==='/live/styles.css')return asset(res,'styles.css','text/css; charset=utf-8');
+      if(pathname==='/live/quality.js')return asset(res,'quality.js','application/javascript; charset=utf-8');
       if(pathname==='/live/client.js')return asset(res,'client.js','application/javascript; charset=utf-8');
       if(pathname==='/live/broadcaster.js')return asset(res,'broadcaster.js','application/javascript; charset=utf-8');
     }

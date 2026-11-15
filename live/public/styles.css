@@ -8,3 +8,11 @@
 .manual-url input{width:100%;padding:10px;border-radius:8px;border:1px solid #547089;background:#081323;color:#eef6ff;font-size:12px}
 .activity-notice{margin:0 0 16px;padding:12px;border:1px solid #4d657f;border-radius:12px;color:#d8e8ff;background:#172438;font-size:13px}
 @media(max-width:780px){.control-actions{justify-content:stretch;width:100%}.control-actions button{flex:1 1 160px}}
+
+.stream-actions{justify-content:flex-end;gap:12px;margin-top:10px}
+.stream-actions button{margin:0!important}
+.stream-actions #selectSource{margin-right:auto!important}
+#sourceInfo{margin:10px 3px}
+#enableAudio[hidden]{display:none}
+#enableAudio{font-size:12px}
+@media(max-width:640px){.stream-actions{display:flex;flex-wrap:wrap}.stream-actions button{flex:1 1 100%!important}#sourceInfo{font-size:12px}}
