@@ -17,6 +17,21 @@ let selected=null,output=null,sourceFps=0,requestedFps=30,lastEncodeAt=0,frameNo
 const wsUrl=()=> (location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/live/ws';
 const RATE_LIMIT=3*1024*1024;
 const permitted=!!roomId&&!!token;
+const shortRoom=String(roomId||'').slice(-6);
+$('sessionInfo').textContent=permitted?'Sala '+shortRoom+' · O código deve ser o mesmo mostrado na Activity do Discord.':'Sem sala identificada.';
+$('relayStatus').textContent=permitted?'Sala '+shortRoom+' · Aguardando envio.':'Link de transmissão inválido.';
+let viewersConnected=0,relayFrames=0,relayLastFrameAt=0,configAccepted=false;
+function describeRelay(){
+  if(!transmitting)return;
+  const viewers=viewersConnected+' espectador(es)';
+  if(!viewersConnected){
+    $('relayStatus').textContent='Sala '+shortRoom+' · '+viewers+'. Nenhum espectador nesta sessão. Volte à Activity, abra uma nova guia pelo botão Abrir no navegador e mantenha as duas abertas.';
+  }else if(!relayLastFrameAt){
+    $('relayStatus').textContent='Sala '+shortRoom+' · '+viewers+' · Transmissor conectado; aguardando quadros no servidor.';
+  }else{
+    $('relayStatus').textContent='Sala '+shortRoom+' · '+viewers+' · Servidor recebeu '+relayFrames+' quadros nos últimos 2 segundos.';
+  }
+}
 function setActions(){
   $('selectSource').disabled=transmitting||!permitted;
   $('start').disabled=!prepared||transmitting||!permitted;
@@ -45,7 +60,8 @@ function disconnect(reason='Compartilhamento encerrado'){
   ws=null;terminateAudio();
   for(const t of stream?.getTracks()||[])t.stop();
   stream=null;video.pause();video.srcObject=null;
-  prepared=false;selected=null;output=null;
+  prepared=false;selected=null;output=null;configAccepted=false;relayFrames=0;relayLastFrameAt=0;
+  $('relayStatus').textContent=permitted?'Sala '+shortRoom+' · Transmissão encerrada.':'Link de transmissão inválido.';
   $('empty').style.display='flex';
   $('network').textContent='Desconectado';
   $('stats').textContent=reason;
@@ -177,8 +193,20 @@ async function begin(){
       };
       ws.onclose=()=>{clearTimeout(timer);reject(Error('Sala encerrada ou inválida'));};
     });
+    const accepted=new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(Error('O servidor não confirmou o formato do vídeo. Confira a conexão.')),6000);
+      ws.onmessage=({data})=>{
+        if(typeof data!=='string')return;
+        let msg;try{msg=JSON.parse(data);}catch{return;}
+        if(msg.type==='config-ack'){clearTimeout(timer);configAccepted=true;resolve(msg);}
+        if(msg.type==='config-error'){clearTimeout(timer);reject(Error(msg.error||'Formato rejeitado pelo servidor'));}
+        if(msg.type==='viewers'){viewersConnected=Number(msg.count)||0;}
+      };
+      ws.onclose=()=>{clearTimeout(timer);reject(Error('Servidor desconectou antes de confirmar a transmissão.'));};
+    });
     ws.send(JSON.stringify({type:'config',codec:config.codec,width:output.width,height:output.height,fps:requestedFps,
       audio:hasAudio,audioSampleRate:hasAudio?audioContext.sampleRate:0}));
+    await accepted;
     const canvas=document.createElement('canvas');canvas.width=output.width;canvas.height=output.height;
     output.canvas=canvas;output.context=canvas.getContext('2d',{alpha:false,desynchronized:true});
     encoder=new VideoEncoder({
@@ -196,8 +224,20 @@ async function begin(){
     captureHandle=video.requestVideoFrameCallback(videoFrame);
     statsTimer=setInterval(monitor,1500);
     $('network').textContent='● AO VIVO';setActions();
-    feedback('Transmitindo '+output.width+'×'+output.height+'; FPS reais aparecem nas estatísticas. '+(hasAudio?'Áudio real da origem ligado.':output.audioRequested?'Sem som: o navegador não forneceu áudio utilizável.':'Sem áudio, como selecionado.'));
-    ws.onmessage=({data})=>{if(typeof data!=='string')return;try{if(JSON.parse(data).type==='keyframe')frameNo=0;}catch{}};
+    describeRelay();
+    feedback('Servidor aceitou a configuração. Transmitindo '+output.width+'×'+output.height+'; FPS reais aparecem nas estatísticas. '+(hasAudio?'Áudio real da origem ligado.':output.audioRequested?'Sem som: o navegador não forneceu áudio utilizável.':'Sem áudio, como selecionado.'));
+    ws.onmessage=({data})=>{
+      if(typeof data!=='string')return;
+      try{
+        const msg=JSON.parse(data);
+        if(msg.type==='keyframe')frameNo=0;
+        if(msg.type==='viewers'){viewersConnected=Number(msg.count)||0;describeRelay();}
+        if(msg.type==='relay-stats'){
+          relayFrames=Number(msg.frames)||0;relayLastFrameAt=Number(msg.lastFrameAt)||0;
+          describeRelay();
+        }
+      }catch{}
+    };
     ws.onclose=()=>{feedback('Conexão encerrada.');disconnect('Conexão perdida');};
   }catch(error){const message=error.message||'Falha ao iniciar transmissão';disconnect('Falha ao iniciar transmissão');feedback(message);}
 }
