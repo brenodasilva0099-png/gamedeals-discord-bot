@@ -222,6 +222,8 @@ async function begin(){
       };
       ws.onclose=()=>{clearTimeout(timer);reject(Error('Sala encerrada ou inválida'));};
     });
+    const label=String($('streamName').value||'').trim().slice(0,48);
+    if(label)ws.send(JSON.stringify({type:'label',label}));
     const accepted=new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('O servidor não confirmou o formato do vídeo. Confira a conexão.')),6000);
       ws.onmessage=({data})=>{
@@ -270,6 +272,10 @@ async function begin(){
     ws.onclose=()=>{feedback('Conexão encerrada.');disconnect('Conexão perdida');};
   }catch(error){const message=error.message||'Falha ao iniciar transmissão';disconnect('Falha ao iniciar transmissão');feedback(message);}
 }
+$('streamName').addEventListener('change',()=>{
+  const label=String($('streamName').value||'').trim().slice(0,48);
+  if(label&&ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'label',label}));
+});
 $('selectSource').onclick=selectSource;
 $('start').onclick=begin;
 $('stop').onclick=()=>disconnect();

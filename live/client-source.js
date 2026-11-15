@@ -6,6 +6,41 @@ const canvas=$('video'),ctx=canvas.getContext('2d',{alpha:false});
 let ws=null,decoder=null,room=null,online=false,retries=0,closed=false;
 let frames=0,lastUpdate=performance.now(),streamConfig=null,audioContext=null,nextAudioAt=0;
 let isHostOnline=false,lastDecodedAt=0,lastRelayAt=0,relayFrames=0,diagnosticTimer=null;
+let selectedStreamId=null;
+const streamPicker=$('streamPicker');
+function switchStream(streamId){
+  if(selectedStreamId===streamId)return;
+  selectedStreamId=streamId;
+  if(decoder){try{decoder.close();}catch{}decoder=null;}
+  isHostOnline=false;lastDecodedAt=0;lastRelayAt=0;relayFrames=0;
+  active(false);
+  signal(streamId?'Mudando de transmissão. Aguardando o vídeo selecionado.':'Aguardando alguém iniciar uma transmissão.');
+}
+function updateStreamList(message){
+  const streams=Array.isArray(message.streams)?message.streams:[];
+  const choice=message.selectedStreamId||'';
+  if(choice&&choice!==selectedStreamId)switchStream(choice);
+  streamPicker.replaceChildren();
+  if(!streams.length){
+    streamPicker.add(new Option('Nenhuma transmissão disponível',''));
+  }else{
+    for(const stream of streams){
+      if(typeof stream.id!=='string')continue;
+      const name=typeof stream.label==='string'?stream.label:'Tela';
+      streamPicker.add(new Option(name+(stream.online?' · transmitindo':' · preparando'),stream.id));
+    }
+  }
+  const current=selectedStreamId&&streams.some(s=>s.id===selectedStreamId)?selectedStreamId:(streams[0]?.id||'');
+  streamPicker.value=current;
+  streamPicker.disabled=streams.length<2;
+  $('streamCount').textContent=streams.length===0?'Nenhuma tela conectada':streams.length===1?'1 transmissão disponível':streams.length+' transmissões disponíveis';
+}
+streamPicker.onchange=()=>{
+  const streamId=streamPicker.value;
+  if(!streamId||ws?.readyState!==WebSocket.OPEN)return;
+  ws.send(JSON.stringify({type:'select-stream',streamId}));
+  signal('Selecionando outra transmissão…');
+};
 const signal=message=>{$('streamStatus').textContent=message;};
 function updateControls(stage){
   const live=stage==='playing',connecting=stage==='connecting';
@@ -167,6 +202,9 @@ function connect(){
   ws.onmessage=event=>{
     if(typeof event.data==='string'){
       let m;try{m=JSON.parse(event.data);}catch{return;}
+      if(m.type==='stream-list')updateStreamList(m);
+      if(m.type==='stream-selected')switchStream(m.streamId||null);
+      if(m.type==='stream-error')feedback(m.error||'Não foi possível selecionar esta transmissão.');
       if(m.type==='config'){
         if(!streamConfig||streamConfig.codec!==m.codec||streamConfig.width!==m.width||streamConfig.height!==m.height||streamConfig.fps!==m.fps)configure(m);
       }

@@ -1,7 +1,8 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>GameDeals Live</title><link rel="stylesheet" href="/live/styles.css?v=20261115f"></head><body>
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>GameDeals Live</title><link rel="stylesheet" href="/live/styles.css?v=20261115h"></head><body>
 <main class="app"><header><div class="logo">🎮 <strong>GAMEDEALS</strong><span class="muted">LIVE</span></div><div class="pill" id="network">Iniciando…</div></header>
 <section class="hero"><div><p class="eyebrow">TRANSMISSÃO EM GRUPO</p><h1>Compartilhe a gameplay.</h1><p class="muted">Veja a tela dos seus amigos diretamente nesta Activity do Discord.</p></div><div class="live" id="liveBadge">● AGUARDANDO</div></section>
 <section class="player"><canvas id="video" aria-label="Vídeo da transmissão"></canvas><div class="empty" id="empty"><span>📺</span><strong>Nenhuma tela sendo transmitida</strong><p>Abra a transmissão no seu computador pelo botão abaixo.</p></div></section>
+<section class="stream-switcher" aria-label="Transmissões disponíveis"><label for="streamPicker">Assistir transmissão:</label><select id="streamPicker" disabled><option value="">Aguardando alguém transmitir</option></select><span id="streamCount">Nenhuma tela conectada</span></section>
 <div class="toolbar"><span id="quality">Sem vídeo</span><span id="audience">0 / 4 espectadores</span><button id="enableAudio" class="secondary" hidden>🔊 Ativar áudio da transmissão</button><button id="fullscreen" class="secondary">⛶ Tela cheia</button></div><p class="stream-status" id="streamStatus" role="status">Aguardando conexão…</p><p class="session-info" id="sessionInfo"></p>
 <section class="controls"><div><h2 id="controlTitle">Iniciar sua transmissão</h2><p class="muted small" id="controlDescription">Escolha onde compartilhar a tela. A captura só começa quando você autorizar a janela ou tela.</p></div>
 <div class="control-actions">
@@ -11,4 +12,4 @@
 </div></section>
 <div id="manualUrl" class="manual-url" hidden><label for="broadcastUrl">Link de transmissão: selecione e copie manualmente (Ctrl+C). Não compartilhe fora da sua sessão.</label><input id="broadcastUrl" type="text" readonly spellcheck="false" autocomplete="off" aria-label="Link de transmissão"></div>
 <div id="feedback" class="feedback" role="status"></div><footer>🔒 Sessão temporária, sem gravações no servidor. Até 1440p/60 FPS, quando a fonte e o navegador sustentarem · Áudio opcional da guia/tela. A qualidade efetiva é exibida durante a transmissão.</footer></main>
-<script src="/live/client.js?v=20261115f" defer></script></body></html>
+<script src="/live/client.js?v=20261115h" defer></script></body></html>

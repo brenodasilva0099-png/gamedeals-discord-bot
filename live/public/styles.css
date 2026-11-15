@@ -19,3 +19,11 @@
 
 .stream-status{border:1px solid #2f5870;background:#0e2134;border-radius:10px;color:#bcf2e4;font-size:12px;line-height:1.5;padding:10px 12px;margin:0 0 6px}
 .session-info{color:#778aa3;font-size:11px;margin:2px 0 14px;word-break:break-word}
+
+/* Selector individual de transmissões da mesma Activity. */
+.stream-switcher{display:flex;flex-wrap:wrap;align-items:center;gap:10px;background:#111e30;border:1px solid #2c4863;border-radius:12px;padding:12px 14px;margin:12px 0 2px}
+.stream-switcher label{font-weight:700;font-size:13px;color:#dceafa}
+.stream-switcher select{flex:1 1 190px;max-width:400px;min-width:140px;margin:0}
+.stream-switcher #streamCount{font-size:12px;color:#94b6d1}
+.broadcaster input#streamName{display:block;margin-top:7px;width:200px;max-width:100%;background:#13243a;color:#eef6ff;border:1px solid #3d5570;border-radius:8px;padding:8px}
+@media(max-width:520px){.stream-switcher select{flex-basis:100%;max-width:none}.broadcaster input#streamName{width:100%}}
