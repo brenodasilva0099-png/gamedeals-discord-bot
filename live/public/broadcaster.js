@@ -189,7 +189,12 @@ async function begin(){
     await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('Sessão não autorizada')),5000);
       ws.onmessage=({data})=>{
-        try{if(typeof data==='string'&&JSON.parse(data).type==='connected'){clearTimeout(timer);resolve();}}catch{}
+        if(typeof data!=='string')return;
+        try{
+          const msg=JSON.parse(data);
+          if(msg.type==='viewers')viewersConnected=Number(msg.count)||0;
+          if(msg.type==='connected'){clearTimeout(timer);resolve();}
+        }catch{}
       };
       ws.onclose=()=>{clearTimeout(timer);reject(Error('Sala encerrada ou inválida'));};
     });

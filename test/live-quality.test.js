@@ -137,3 +137,10 @@ test('cliente só marca vídeo ativo depois de decodificar o primeiro quadro',()
   assert.match(host,/await accepted/);
   assert.match(host,/roomId/);
 });
+
+test('transmissor recebe quantidade de espectadores mesmo durante handshake',()=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const js=fs.readFileSync(path.join(__dirname,'../live/public/broadcaster.js'),'utf8');
+  assert.ok(js.includes("if(msg.type==='viewers')viewersConnected=Number(msg.count)||0"));
+  assert.ok(js.includes('describeRelay();'));
+});
