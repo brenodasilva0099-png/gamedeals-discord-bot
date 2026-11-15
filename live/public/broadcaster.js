@@ -117,13 +117,29 @@ async function selectSource(){
   }finally{setActions();}
 }
 async function encoderConfig(width,height,fps){
-  const bitrate=GDQuality.bitrate(width,height,fps);
-  for(const codec of ['avc1.640033','vp8','avc1.42E01E']){
-    const opts={codec,width,height,bitrate,framerate:fps,latencyMode:'realtime',hardwareAcceleration:'prefer-hardware'};
-    if(codec.startsWith('avc1'))opts.avc={format:'annexb'};
-    try{if((await VideoEncoder.isConfigSupported(opts)).supported)return opts;}catch{}
+  // Forcar hardwareAcceleration=prefer-hardware restringe codecs suportados
+  // em alguns navegadores. O padrao 'no-preference' permite software e hardware.
+  const attempts=[];
+  for(const mode of GDQuality.encoderCandidates(width,height,fps)){
+    for(const codec of ['vp8','avc1.42E01E','avc1.640033']){
+      const opts={
+        codec,width:mode.width,height:mode.height,
+        bitrate:GDQuality.bitrate(mode.width,mode.height,mode.fps),
+        framerate:mode.fps,latencyMode:'realtime',
+        hardwareAcceleration:'no-preference'
+      };
+      if(codec.startsWith('avc1'))opts.avc={format:'annexb'};
+      try{
+        const supported=await VideoEncoder.isConfigSupported(opts);
+        if(supported?.supported)return opts;
+        attempts.push(codec+' '+mode.height+'p'+mode.fps+': nao suportado');
+      }catch(e){
+        attempts.push(codec+' '+mode.height+'p'+mode.fps+': '+(e?.name||'erro'));
+      }
+    }
   }
-  throw Error('O navegador não suporta codificar essa resolução/FPS. Reduza a qualidade ou use outro navegador.');
+  console.warn('[GameDeals Live] Tentativas de codificacao:',attempts);
+  throw Error('Este navegador não disponibilizou um codificador de vídeo compatível, mesmo em 480p/15 FPS. Confira se a aceleração gráfica está habilitada no Opera ou tente Chrome/Edge atualizado.');
 }
 async function setupAudio(){
   if(!output.audioAvailable||!stream?.getAudioTracks().length)return false;
@@ -178,7 +194,15 @@ async function begin(){
     if(!window.VideoEncoder||!window.VideoFrame||!video.requestVideoFrameCallback)throw Error('Este navegador não oferece as APIs necessárias para capturar quadros únicos. Tente Chrome, Edge ou Opera atualizado.');
     // Começar o contexto de áudio imediatamente sob o clique do usuário evita bloqueio de autoplay.
     const hasAudio=await setupAudio();
-    const config=await encoderConfig(output.width,output.height,requestedFps);
+    const desired={width:output.width,height:output.height,fps:requestedFps};
+    const config=await encoderConfig(desired.width,desired.height,desired.fps);
+    if(config.width!==desired.width||config.height!==desired.height||config.framerate!==desired.fps){
+      $('sourceInfo').textContent+=' Codificador ajustado automaticamente para '+config.width+'×'+config.height+' a '+config.framerate+' FPS ('+config.codec.toUpperCase()+').';
+      feedback('O Opera rejeitou a qualidade solicitada. Usando automaticamente '+config.height+'p/'+config.framerate+' FPS.');
+    }
+    output.width=config.width;
+    output.height=config.height;
+    requestedFps=config.framerate;
     ws=new WebSocket(wsUrl());ws.binaryType='arraybuffer';
     await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('Conexão WebSocket expirou')),8000);

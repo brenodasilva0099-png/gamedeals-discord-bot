@@ -154,3 +154,27 @@ test('Activity deixa de pedir para iniciar quando o video realmente comeca',()=>
   assert.ok(client.includes('Transmissão em andamento'));
   assert.ok(client.includes('updateControls(value?'));
 });
+
+test('fallback reduz automaticamente FPS e resolucao sem aumentar pixels',()=>{
+  const {encoderCandidates}=require('../live/public/quality.js');
+  const options=encoderCandidates(1920,1080,60);
+  assert.deepEqual(options[0],{width:1920,height:1080,fps:60});
+  assert.deepEqual(options[1],{width:1920,height:1080,fps:30});
+  assert.ok(options.some(c=>c.width===1280&&c.height===720&&c.fps===30));
+  assert.ok(options.some(c=>c.height===480&&c.fps===15));
+  assert.ok(options.every(c=>c.width<=1920&&c.height<=1080&&c.width%2===0&&c.height%2===0));
+  const small=encoderCandidates(640,360,60);
+  assert.ok(small.every(c=>c.width<=640&&c.height<=360));
+  assert.deepEqual([...new Set(options.map(c=>c.width+'x'+c.height+'@'+c.fps))].length,options.length);
+  assert.throws(()=>encoderCandidates(1920,1080,120),/inválido/);
+});
+
+test('codificador nao obriga aceleracao por hardware e apresenta diagnostico de fallback',()=>{
+  const fs=require('node:fs');
+  const file=fs.readFileSync(require('node:path').join(__dirname,'../live/public/broadcaster.js'),'utf8');
+  assert.match(file,/hardwareAcceleration:'no-preference'/);
+  assert.match(file,/GDQuality\.encoderCandidates\(width,height,fps\)/);
+  assert.match(file,/config\.framerate/);
+  assert.match(file,/output\.width=config\.width/);
+  assert.match(file,/output\.height=config\.height/);
+});
