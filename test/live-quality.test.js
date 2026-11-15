@@ -87,3 +87,53 @@ test('fluxo de seleção separa consentimento de captura e inicio da transmissã
   assert.ok(js.includes('createMediaStreamSource('));
   assert.ok(activity.includes('enableAudio'));
 });
+
+test('transmissor só anuncia ao vivo após ACK e espectador pode sincronizar sala',async()=>{
+  const old=process.env.ACTIVITY_PUBLIC_URL;
+  process.env.ACTIVITY_PUBLIC_URL='https://gamedeals.squareweb.app';
+  const app=startLiveServer({port:0,logger:{info(){}}});
+  await once(app.server,'listening');
+  const room=app.rooms.getOrCreate('1570000000000000042');
+  const url='ws://127.0.0.1:'+app.server.address().port+'/live/ws';
+  const host=new WebSocket(url,{origin:'https://gamedeals.squareweb.app'});
+  const viewer=new WebSocket(url,{origin:'https://gamedeals.squareweb.app'});
+  try{
+    await Promise.all([once(host,'open'),once(viewer,'open')]);
+    const h=awaitMessage(host,m=>m.type==='connected');
+    host.send(JSON.stringify({role:'host',roomId:room.instanceId,token:room.hostToken}));
+    assert.equal((await h).room,room.instanceId.slice(-6));
+    const v=awaitMessage(viewer,m=>m.type==='connected');
+    viewer.send(JSON.stringify({role:'viewer',roomId:room.instanceId,token:room.viewerToken}));
+    assert.equal((await v).room,room.instanceId.slice(-6));
+    const ack=awaitMessage(host,m=>m.type==='config-ack');
+    const cfg=awaitMessage(viewer,m=>m.type==='config');
+    host.send(JSON.stringify({type:'config',codec:'vp8',width:1920,height:1080,fps:60,audio:false}));
+    assert.equal((await ack).fps,60);
+    assert.equal((await cfg).width,1920);
+    const receives=awaitMessage(viewer,(m,b)=>b&&m[0]===1);
+    const frame=Buffer.alloc(100);frame[0]=1;
+    host.send(frame,{binary:true});
+    assert.equal((await receives).length,100);
+    const sync=awaitMessage(viewer,m=>m.type==='relay-stats');
+    viewer.send(JSON.stringify({type:'sync'}));
+    assert.equal((await sync).viewers,1);
+    const error=awaitMessage(host,m=>m.type==='config-error');
+    host.send(JSON.stringify({type:'config',codec:'fake',width:7000,height:4000,fps:120}));
+    assert.match((await error).error,/rejeitou/);
+  }finally{
+    host.terminate();viewer.terminate();await app.close();
+    if(old===undefined)delete process.env.ACTIVITY_PUBLIC_URL;else process.env.ACTIVITY_PUBLIC_URL=old;
+  }
+});
+test('cliente só marca vídeo ativo depois de decodificar o primeiro quadro',()=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const client=fs.readFileSync(path.join(__dirname,'../live/client-source.js'),'utf8');
+  const host=fs.readFileSync(path.join(__dirname,'../live/public/broadcaster.js'),'utf8');
+  assert.match(client,/lastDecodedAt=Date\.now\(\)/);
+  assert.match(client,/if\(!online\)\{active\(true\)/);
+  assert.match(client,/type:'sync'/);
+  assert.match(client,/type==='relay-stats'/);
+  assert.match(host,/type==='config-ack'/);
+  assert.match(host,/await accepted/);
+  assert.match(host,/roomId/);
+});

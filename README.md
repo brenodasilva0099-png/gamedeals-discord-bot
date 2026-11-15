@@ -174,3 +174,11 @@ O fluxo de captura em `live/public/broadcast.html` separa **Escolher tela ou jan
 Perfis: 480p/720p/1080p/1440p e 15/30/60 FPS. A saída preserva a proporção da fonte e não amplia uma fonte de resolução inferior. O WebCodecs testa suporte ao codec e encoder antes de iniciar; a captura usa `requestVideoFrameCallback` para processar quadros novos, e estatísticas indicam FPS **efetivamente codificados/enviados** e **decodificados/exibidos**, não só a meta selecionada. 1440p/60 não é garantia: depende de resolução da fonte, navegador, sistema, GPU, janela em segundo plano e conexão. Perfis altos aumentam banda e CPU; o servidor apenas encaminha os pacotes via WebSocket.
 
 Áudio opcional: `Sem áudio` ou `Com áudio da tela/guia`. Se o navegador disponibilizar uma faixa de áudio em `getDisplayMedia({audio:true})`, o transmissor encaminha **PCM mono 16-bit** via WebSocket (não simula som). O espectador precisa clicar **Ativar áudio da transmissão** para desbloquear a reprodução. O navegador pode não disponibilizar som do sistema para a origem selecionada; nesse caso a transmissão permanece sem áudio e informa isso, sem prometer uma captura inexistente. Não é captura de microfone e não é um sistema de gravação.
+
+## Diagnóstico de tela preta (GameDeals Live)
+
+A versão atual só mostra **AO VIVO** na Activity depois de receber e decodificar o primeiro quadro. O transmissor aguarda `config-ack` do relay antes de exibir AO VIVO; a guia externa e a Activity mostram os últimos seis caracteres do `roomId` (identificação pública da sala, sem tokens). Eles devem coincidir. 
+
+No transmissor, **espectadores conectados = 0** significa que não há uma Activity assistindo à mesma sessão; saia da Activity, encerre a guia de transmissão antiga, inicie novamente a Activity e use o botão **Abrir no navegador** para gerar link novo. **Quadros recebidos pelo servidor = 0** com FPS locais positivos indica problemas entre codificador/rede e relay. Se o relay recebe quadros mas a Activity não exibe vídeo, verifique erro do codec/decodificador no rodapé da Activity. A Activity envia `sync` periodicamente para se recuperar de mensagens de estado perdidas.
+
+O protocolo usa mensagens `config-ack`, `config-error`, `relay-stats`, `sync` e `viewers`; não retorna tokens em diagnóstico e não grava frames.
