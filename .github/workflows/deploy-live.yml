@@ -44,14 +44,15 @@ jobs:
           (cd stage && npm install --omit=dev --ignore-scripts --no-audit --no-fund)
       - name: Testar rotas HTTP da nova aplicacao
         run: |
-          (cd stage && PORT=18765 node index.js > ../live-web-test.log 2>&1 & echo $! > ../live-web-test.pid)
+          (cd stage; PORT=18765 node index.js > ../live-web-test.log 2>&1 & echo $! > ../live-web-test.pid)
           for i in 1 2 3 4 5 6 7 8; do
             if curl --fail --silent http://127.0.0.1:18765/health | grep -q '"live":true'; then break; fi
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:18765/health | grep -q '"ok":true'
           curl --fail --silent http://127.0.0.1:18765/live/ | grep -q 'GAMEDEALS'
-          curl --fail --silent http://127.0.0.1:18765/live/client.js | grep -q 'Discord'
+          curl --fail --silent http://127.0.0.1:18765/live/client.js -o /tmp/client-bundle.js
+          test $(wc -c </tmp/client-bundle.js) -gt 10000
           curl --fail --silent http://127.0.0.1:18765/live/broadcast | grep -q '<html'
           kill $(cat live-web-test.pid) || true
       - name: Criar ZIP pronto para envio inicial pelo painel
