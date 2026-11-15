@@ -49,7 +49,7 @@ test('Activity oferece abertura pelo SDK e captura interna experimental com fall
   assert.match(src,/navigator\.clipboard\?\.writeText/);
   assert.match(broadcast,/id="backToActivity"/);
   assert.match(script,/fromActivity/);
-  assert.match(script,/O Discord não permitiu capturar/);
+  assert.match(script,/O Discord bloqueou a captura/);
 });
 
 test('Activity nao pode reutilizar JS antigo do cache apos deploy',async()=>{

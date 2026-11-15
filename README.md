@@ -166,3 +166,11 @@ No GameDeals-Bot, mantenha `ENABLE_LIVE=1`. O worker **nao inicia HTTP/WebSocket
 No Discord Developer Portal, Activities > URL Mappings: prefix `/` para `gamedeals.squareweb.app`, SSL ativo, sem override localhost. Confirme `https://gamedeals.squareweb.app/health` antes de abrir a Activity.
 
 O GameDeals Live atual transmite **video, sem audio**.
+
+## GameDeals Live: 1080p, 1440p, 60 FPS e som opcional
+
+O fluxo de captura em `live/public/broadcast.html` separa **Escolher tela ou janela** de **Iniciar transmissão**. A permissão de captura só pode ser exibida pelo próprio navegador após interação do usuário, e a Activity embutida pode bloquear `getDisplayMedia` por política de permissões do Discord. Para esse caso, use **Abrir no navegador**.
+
+Perfis: 480p/720p/1080p/1440p e 15/30/60 FPS. A saída preserva a proporção da fonte e não amplia uma fonte de resolução inferior. O WebCodecs testa suporte ao codec e encoder antes de iniciar; a captura usa `requestVideoFrameCallback` para processar quadros novos, e estatísticas indicam FPS **efetivamente codificados/enviados** e **decodificados/exibidos**, não só a meta selecionada. 1440p/60 não é garantia: depende de resolução da fonte, navegador, sistema, GPU, janela em segundo plano e conexão. Perfis altos aumentam banda e CPU; o servidor apenas encaminha os pacotes via WebSocket.
+
+Áudio opcional: `Sem áudio` ou `Com áudio da tela/guia`. Se o navegador disponibilizar uma faixa de áudio em `getDisplayMedia({audio:true})`, o transmissor encaminha **PCM mono 16-bit** via WebSocket (não simula som). O espectador precisa clicar **Ativar áudio da transmissão** para desbloquear a reprodução. O navegador pode não disponibilizar som do sistema para a origem selecionada; nesse caso a transmissão permanece sem áudio e informa isso, sem prometer uma captura inexistente. Não é captura de microfone e não é um sistema de gravação.

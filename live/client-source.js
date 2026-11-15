@@ -16,6 +16,7 @@ const active=value=>{
     $('quality').textContent='Sem vídeo';
     canvas.width=1;canvas.height=1;
     closeAudio();streamConfig=null;
+    $('enableAudio').hidden=true;
   }
 };
 function closeAudio(){

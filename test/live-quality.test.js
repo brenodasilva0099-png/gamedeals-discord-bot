@@ -42,10 +42,12 @@ test('servidor aceita 1440p a 60 FPS e encaminha audio PCM real opcional',async(
   const viewer=new WebSocket(url,{origin});
   try{
     await Promise.all([once(host,'open'),once(viewer,'open')]);
+    const hostReady=awaitMessage(host,val=>val.type==='connected');
     host.send(JSON.stringify({role:'host',roomId:room.instanceId,token:room.hostToken}));
+    await hostReady;
+    const viewerReady=awaitMessage(viewer,val=>val.type==='connected');
     viewer.send(JSON.stringify({role:'viewer',roomId:room.instanceId,token:room.viewerToken}));
-    // Espera o handshake ser processado antes de enviar a configuração.
-    await new Promise(resolve=>setTimeout(resolve,70));
+    await viewerReady;
     const gotConfig=awaitMessage(viewer,val=>val.type==='config');
     host.send(JSON.stringify({type:'config',codec:'vp8',width:2560,height:1440,fps:60,audio:true,audioSampleRate:48000}));
     const config=await gotConfig;

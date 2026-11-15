@@ -160,8 +160,9 @@ async function begin(){
   $('start').disabled=true;feedback('Verificando codificador e preparando a transmissão…');
   try{
     if(!window.VideoEncoder||!window.VideoFrame||!video.requestVideoFrameCallback)throw Error('Este navegador não oferece as APIs necessárias para capturar quadros únicos. Tente Chrome, Edge ou Opera atualizado.');
-    const config=await encoderConfig(output.width,output.height,requestedFps);
+    // Começar o contexto de áudio imediatamente sob o clique do usuário evita bloqueio de autoplay.
     const hasAudio=await setupAudio();
+    const config=await encoderConfig(output.width,output.height,requestedFps);
     ws=new WebSocket(wsUrl());ws.binaryType='arraybuffer';
     await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('Conexão WebSocket expirou')),8000);
