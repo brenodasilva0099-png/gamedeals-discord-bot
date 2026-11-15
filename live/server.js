@@ -107,16 +107,26 @@ function startLiveServer({port=PORT,logger=console}={}) {
       room.lastAccess=Date.now();
       if(role==='viewer')return;
       if(isBinary){
-        if(!room.config||data.byteLength>rooms.MAX_FRAME_BYTES||data.byteLength<12)return;
+        // Tipo 0/1 = quadro de video delta/keyframe; tipo 2 = audio PCM mono, 16-bit LE.
+        // O servidor nao codifica, nao grava e nao reproduz o conteudo.
+        if(!room.config||data.byteLength>rooms.MAX_FRAME_BYTES||data.byteLength<10)return;
+        const kind=data[0];
+        if(kind!==0 && kind!==1 && kind!==2)return;
+        if(kind===2 && !room.config.audio)return;
         for(const v of room.viewers) if(v.readyState===WebSocket.OPEN && v.bufferedAmount<rooms.MAX_BUFFERED)v.send(data,{binary:true});
         return;
       }
       try{
         const message=JSON.parse(data.toString());
-        if(message.type==='config' && ['vp8','avc1.42E01E','avc1.42001f'].includes(message.codec)
-          && [480,720].includes(message.height) && Number.isInteger(message.width) && message.width>200 && message.width<=1600
-          && [15,30].includes(message.fps)){
-          room.config={codec:message.codec,width:message.width,height:message.height,fps:message.fps};
+        if(message.type==='config'
+          && ['vp8','avc1.640033','avc1.42E01E'].includes(message.codec)
+          && Number.isInteger(message.height) && message.height>=180 && message.height<=1440 && message.height%2===0
+          && Number.isInteger(message.width) && message.width>=320 && message.width<=2560 && message.width%2===0
+          && [15,30,60].includes(message.fps)
+          && [false,true,undefined].includes(message.audio)
+          && (!message.audio || [44100,48000].includes(message.audioSampleRate))){
+          room.config={codec:message.codec,width:message.width,height:message.height,fps:message.fps,
+            audio:message.audio===true, audioSampleRate:message.audio===true?message.audioSampleRate:0};
           emitRoom(room,{type:'config',...room.config});
         }
         if(message.type==='stop'){room.config=null;emitRoom(room,{type:'status',online:false});}
