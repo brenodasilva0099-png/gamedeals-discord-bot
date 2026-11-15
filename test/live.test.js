@@ -51,3 +51,26 @@ test('Activity oferece abertura pelo SDK e captura interna experimental com fall
   assert.match(script,/fromActivity/);
   assert.match(script,/O Discord não permitiu capturar/);
 });
+
+test('Activity nao pode reutilizar JS antigo do cache apos deploy',async()=>{
+  const fs=require('node:fs');
+  const path=require('node:path');
+  const {startLiveServer}=require('../live/server');
+  const activity=fs.readFileSync(path.join(__dirname,'../live/public/activity.html'),'utf8');
+  assert.match(activity,/src="\\/live\\/client\\.js\\?v=[^"]+"/);
+  const broadcaster=fs.readFileSync(path.join(__dirname,'../live/public/broadcast.html'),'utf8');
+  assert.match(broadcaster,/src="\\/live\\/broadcaster\\.js\\?v=[^"]+"/);
+  const app=startLiveServer({port:0,logger:{info(){}}});
+  await new Promise(resolve=>app.server.once('listening',resolve));
+  try{
+    const base='http://127.0.0.1:'+app.server.address().port;
+    const js=await fetch(base+'/live/client.js');
+    assert.equal(js.status,200);
+    assert.match(js.headers.get('cache-control')||'',/no-store/);
+    const html=await fetch(base+'/live/');
+    assert.match(html.headers.get('cache-control')||'',/no-store/);
+    assert.match(await html.text(),/openBrowser/);
+  }finally{
+    await app.close();
+  }
+});

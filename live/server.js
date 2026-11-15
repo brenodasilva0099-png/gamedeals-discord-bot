@@ -17,7 +17,9 @@ function readJson(req) {return new Promise((resolve,reject)=>{
 });}
 function json(res,status,body) {res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body));}
 function html(res,file) {res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Permissions-Policy':'display-capture=(self)'});res.end(fs.readFileSync(path.join(ROOT,file)));}
-function asset(res,file,type) {res.writeHead(200,{'Content-Type':type,'Cache-Control':'public, max-age=300','X-Content-Type-Options':'nosniff'});res.end(fs.readFileSync(path.join(ROOT,file)));}
+// A Activity e o broadcaster mudam a cada deploy. Nao permitir JS antigo cacheado
+// com HTML novo: isso pode deixar apenas o botao Copiar link habilitado.
+function asset(res,file,type) {res.writeHead(200,{'Content-Type':type,'Cache-Control':'no-store, max-age=0','X-Content-Type-Options':'nosniff'});res.end(fs.readFileSync(path.join(ROOT,file)));}
 async function verifyActivityInstance(id) {
   if(process.env.LIVE_ALLOW_UNVERIFIED === '1')return true; // apenas desenvolvimento LOCAL
   const hit=HTTP_CACHE.get(id);

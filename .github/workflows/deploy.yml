@@ -3,6 +3,16 @@ name: Deploy GameDeals na Square Cloud
 on:
   push:
     branches: [main]
+    paths:
+      - 'index.js'
+      - 'db.js'
+      - 'store.js'
+      - 'cheapshark.js'
+      - 'media.js'
+      - 'squarecloud.app'
+      - 'package.json'
+      - 'live/entry-point.js'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 permissions:
