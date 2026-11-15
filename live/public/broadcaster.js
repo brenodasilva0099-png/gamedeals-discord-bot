@@ -3,7 +3,14 @@ const $=id=>document.getElementById(id);
 const feedback=msg=>{$('feedback').textContent=msg;};
 const hash=new URLSearchParams(location.hash.slice(1));
 const roomId=hash.get('room'),token=hash.get('key');
+const fromActivity=new URL(location.href).searchParams.get('from')==='activity' || location.hostname.endsWith('.discordsays.com');
+// Limpa o token sensível do endereço visível imediatamente após carregá-lo.
 history.replaceState(null,'',location.pathname);
+if(fromActivity){
+  $('activityNotice').hidden=false;
+  $('backToActivity').hidden=false;
+  $('backToActivity').onclick=()=>location.assign('/live/');
+}
 if(!roomId||!token){$('start').disabled=true;feedback('Link de transmissão inválido. Copie um link novo dentro da GameDeals Activity.');}
 let stream=null,ws=null,encoder=null,frameTimer=null,statsTimer=null,frameNo=0,enabled=false,video=$('preview');
 const wsUrl=()=>`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/live/ws`;
@@ -53,6 +60,13 @@ async function begin(){if(enabled||!roomId||!token)return;
     $('stop').disabled=false;$('empty').style.display='none';$('network').textContent='● Ao vivo';feedback('Transmitindo. Para encerrar, clique em Parar ou feche esta página.');
     ws.onmessage=({data})=>{if(typeof data!=='string')return;try{const msg=JSON.parse(data);if(msg.type==='keyframe')frameNo=0;if(msg.type==='viewers')$('stats').textContent=`${height}p • ${msg.count} espectadores`; }catch{}};
     ws.onclose=()=>{feedback('Conexão perdida. A transmissão foi interrompida para proteger sua privacidade.');disconnect();};
-  }catch(e){feedback(e.message||'Erro ao iniciar captura');disconnect();}
+  }catch(e){
+    if(fromActivity && (e.name==='NotAllowedError'||e.name==='SecurityError'||/permission|capture|user activation|sandbox|denied|not allowed/i.test(String(e.message||'')))){
+      feedback('O Discord não permitiu capturar a tela nesta Activity. Clique em Voltar à Activity e escolha Abrir no navegador (recomendado).');
+    }else{
+      feedback(e.message||'Erro ao iniciar captura');
+    }
+    disconnect();
+  }
 }
 $('start').onclick=begin;$('stop').onclick=disconnect;window.addEventListener('beforeunload',disconnect);

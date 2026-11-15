@@ -16,10 +16,44 @@ async function setup() {
     const response=await fetch('/api/live/room',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({instanceId})});
     const info=await response.json();
     if(!response.ok)throw Error(info.error||'Falha na sala');
-    room=info;$('copyLink').disabled=false;
+    room=info;
+    $('copyLink').disabled=false;
+    $('openBrowser').disabled=false;
+    $('streamHere').disabled=false;
+    const revealManualLink=()=>{
+      $('manualUrl').hidden=false;
+      $('broadcastUrl').value=room.broadcastUrl;
+      $('broadcastUrl').focus();
+      $('broadcastUrl').select();
+      feedback('O Discord bloqueou a cópia automática. Copie o endereço selecionado com Ctrl+C e abra-o em uma guia normal do navegador.');
+    };
     $('copyLink').onclick=async()=>{
-      try{await navigator.clipboard.writeText(room.broadcastUrl);feedback('Link de captura copiado. Abra no navegador do PC, fora do Discord.');}
-      catch{feedback('Não foi possível copiar automaticamente. Verifique as permissões da área de transferência.');}
+      try{
+        if(!navigator.clipboard?.writeText)throw Error('Clipboard indisponível');
+        await navigator.clipboard.writeText(room.broadcastUrl);
+        feedback('Link copiado! Abra em uma guia normal do navegador para transmitir.');
+      }catch{revealManualLink();}
+    };
+    $('openBrowser').onclick=async()=>{
+      try{
+        // Activity roda em iframe. A API oficial do Discord abre URL fora do sandbox.
+        const result=await sdk.commands.openExternalLink({url:room.broadcastUrl});
+        if(result?.opened===false){
+          feedback('A abertura no navegador foi cancelada. Clique novamente para autorizar, ou use Copiar link.');
+        }else{
+          feedback('Confirme no Discord a abertura do navegador. Na página, clique em Iniciar e escolha sua tela.');
+        }
+      }catch(err){
+        revealManualLink();
+        feedback('O Discord não conseguiu abrir a guia automaticamente. Selecione o link abaixo e copie com Ctrl+C.');
+      }
+    };
+    $('streamHere').onclick=()=>{
+      // Mantém o token apenas no fragmento da URL, nunca em query ou logs HTTP.
+      const target=new URL('/live/broadcast',location.origin);
+      target.searchParams.set('from','activity');
+      target.hash=new URL(room.broadcastUrl).hash;
+      location.assign(target.toString());
     };
     connect();
   }catch(err){$('network').textContent='Indisponível';feedback(`${err.message}. Habilite Activities e configure o mapeamento HTTPS no Developer Portal.`);}

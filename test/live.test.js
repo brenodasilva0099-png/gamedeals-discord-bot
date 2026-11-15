@@ -32,3 +32,22 @@ test('capacidade limitada de salas e espectadores',()=>{
   for(let i=0;i<MAX_ROOMS;i++)rs.getOrCreate(String(1570000000000000000n+BigInt(i)));
   assert.throws(()=>rs.getOrCreate('1570000000000011111'),/ocupadas/);
 });
+
+test('Activity oferece abertura pelo SDK e captura interna experimental com fallback manual',()=>{
+  const fs=require('node:fs');
+  const path=require('node:path');
+  const root=path.join(__dirname,'..');
+  const html=fs.readFileSync(path.join(root,'live/public/activity.html'),'utf8');
+  const src=fs.readFileSync(path.join(root,'live/client-source.js'),'utf8');
+  const broadcast=fs.readFileSync(path.join(root,'live/public/broadcast.html'),'utf8');
+  const script=fs.readFileSync(path.join(root,'live/public/broadcaster.js'),'utf8');
+  assert.match(html,/id="openBrowser"/);
+  assert.match(html,/id="streamHere"/);
+  assert.match(html,/id="manualUrl"/);
+  assert.match(src,/sdk\.commands\.openExternalLink\(\{url:room\.broadcastUrl\}\)/);
+  assert.match(src,/target\.hash=new URL\(room\.broadcastUrl\)\.hash/);
+  assert.match(src,/navigator\.clipboard\?\.writeText/);
+  assert.match(broadcast,/id="backToActivity"/);
+  assert.match(script,/fromActivity/);
+  assert.match(script,/O Discord não permitiu capturar/);
+});

@@ -3,6 +3,12 @@
 <section class="hero"><div><p class="eyebrow">TRANSMISSÃO EM GRUPO</p><h1>Compartilhe a gameplay.</h1><p class="muted">Veja a tela dos seus amigos diretamente nesta Activity do Discord.</p></div><div class="live" id="liveBadge">● AGUARDANDO</div></section>
 <section class="player"><canvas id="video" aria-label="Vídeo da transmissão"></canvas><div class="empty" id="empty"><span>📺</span><strong>Nenhuma tela sendo transmitida</strong><p>Abra a transmissão no seu computador pelo botão abaixo.</p></div></section>
 <div class="toolbar"><span id="quality">Sem vídeo</span><span id="audience">0 / 4 espectadores</span><button id="fullscreen" class="secondary">⛶ Tela cheia</button></div>
-<section class="controls"><div><h2>Iniciar sua transmissão</h2><p class="muted small">O navegador pedirá que você escolha uma janela ou tela. Não existe captura automática.</p></div><button class="primary" id="copyLink" disabled>📋 Copiar link para transmitir</button></section>
+<section class="controls"><div><h2>Iniciar sua transmissão</h2><p class="muted small">Escolha onde compartilhar a tela. A captura só começa quando você autorizar a janela ou tela.</p></div>
+<div class="control-actions">
+<button class="primary" id="openBrowser" disabled>↗ Abrir no navegador</button>
+<button class="secondary" id="streamHere" disabled>▣ Transmitir aqui (experimental)</button>
+<button class="secondary" id="copyLink" disabled>📋 Copiar link</button>
+</div></section>
+<div id="manualUrl" class="manual-url" hidden><label for="broadcastUrl">Link de transmissão: selecione e copie manualmente (Ctrl+C). Não compartilhe fora da sua sessão.</label><input id="broadcastUrl" type="text" readonly spellcheck="false" autocomplete="off" aria-label="Link de transmissão"></div>
 <div id="feedback" class="feedback" role="status"></div><footer>🔒 Sessão temporária, sem gravações no servidor. 720p/30 FPS máximo na versão inicial · Som ainda indisponível.</footer></main>
 <script src="/live/client.js" defer></script></body></html>
