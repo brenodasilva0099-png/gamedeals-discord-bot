@@ -57,9 +57,9 @@ test('Activity nao pode reutilizar JS antigo do cache apos deploy',async()=>{
   const path=require('node:path');
   const {startLiveServer}=require('../live/server');
   const activity=fs.readFileSync(path.join(__dirname,'../live/public/activity.html'),'utf8');
-  assert.match(activity,/src="\\/live\\/client\\.js\\?v=[^"]+"/);
+  assert.ok(activity.includes('src="/live/client.js?v='));
   const broadcaster=fs.readFileSync(path.join(__dirname,'../live/public/broadcast.html'),'utf8');
-  assert.match(broadcaster,/src="\\/live\\/broadcaster\\.js\\?v=[^"]+"/);
+  assert.ok(broadcaster.includes('src="/live/broadcaster.js?v='));
   const app=startLiveServer({port:0,logger:{info(){}}});
   await new Promise(resolve=>app.server.once('listening',resolve));
   try{
