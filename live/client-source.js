@@ -5,6 +5,8 @@ const feedback=msg=>{$('feedback').textContent=msg;};
 const canvas=$('video'),ctx=canvas.getContext('2d',{alpha:false});
 let ws=null,decoder=null,room=null,online=false,retries=0,closed=false;
 let frames=0,lastUpdate=performance.now(),streamConfig=null,audioContext=null,nextAudioAt=0;
+let isHostOnline=false,lastDecodedAt=0,lastRelayAt=0,relayFrames=0,diagnosticTimer=null;
+const signal=message=>{$('streamStatus').textContent=message;};
 const sdk=new DiscordSDK('1569671744803967127');
 const wsUrl=()=> (location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/live/ws';
 const active=value=>{
@@ -17,6 +19,7 @@ const active=value=>{
     canvas.width=1;canvas.height=1;
     closeAudio();streamConfig=null;
     $('enableAudio').hidden=true;
+    lastDecodedAt=0;
   }
 };
 function closeAudio(){
@@ -69,6 +72,8 @@ async function setup(){
     const info=await response.json();
     if(!response.ok)throw Error(info.error||'Falha na sala');
     room=info;
+    $('sessionInfo').textContent='Sala '+String(room.roomId).slice(-6)+' · Compare este código com o mostrado no navegador transmissor.';
+    signal('Sala criada. Aguardando a conexão do transmissor.');
     for(const key of ['copyLink','openBrowser','streamHere'])$(key).disabled=false;
     const revealManualLink=()=>{
       $('manualUrl').hidden=false;
@@ -115,7 +120,8 @@ function configure({codec,width,height,fps,audio=false,audioSampleRate=0}){
             canvas.width=frame.displayWidth;canvas.height=frame.displayHeight;
           }
           ctx.drawImage(frame,0,0,canvas.width,canvas.height);
-          frames++;
+          frames++;lastDecodedAt=Date.now();
+          if(!online){active(true);signal('Vídeo recebido e decodificado.');}
           const now=performance.now(),elapsed=now-lastUpdate;
           if(elapsed>=1300){
             const actualFps=frames*1000/elapsed;
@@ -129,21 +135,51 @@ function configure({codec,width,height,fps,audio=false,audioSampleRate=0}){
     decoder.configure({codec,codedWidth:width,codedHeight:height,optimizeForLatency:true});
     frames=0;lastUpdate=performance.now();
     $('quality').textContent=width+'×'+height+' · aguardando quadros (meta '+fps+' FPS)'+(audio?' · áudio disponível':' · sem áudio');
-    active(true);
-  }catch(e){feedback('Codec de vídeo incompatível: '+e.message);}
+    // O player só anuncia vídeo ativo depois de decodificar o primeiro quadro.
+    canvas.parentNode.classList.remove('streaming');
+    $('liveBadge').textContent='● AGUARDANDO QUADROS';
+    signal('Configuração '+width+'×'+height+' recebida. Aguardando os primeiros quadros de vídeo.');
+    ws?.send(JSON.stringify({type:'sync'}));
+  }catch(e){
+    signal('O servidor enviou configuração, mas o decodificador a rejeitou.');
+    feedback('Codec de vídeo incompatível: '+e.message);
+  }
 }
 function connect(){
   if(!room||closed)return;
   ws=new WebSocket(wsUrl());ws.binaryType='arraybuffer';
   ws.onopen=()=>{
     retries=0;$('network').textContent='Conectado';
+    signal('WebSocket conectado. Aguardando informações do servidor.');
     ws.send(JSON.stringify({role:'viewer',roomId:room.roomId,token:room.viewerToken}));
   };
   ws.onmessage=event=>{
     if(typeof event.data==='string'){
       let m;try{m=JSON.parse(event.data);}catch{return;}
-      if(m.type==='config')configure(m);
-      if(m.type==='status')active(Boolean(m.online));
+      if(m.type==='config'){
+        if(!streamConfig||streamConfig.codec!==m.codec||streamConfig.width!==m.width||streamConfig.height!==m.height||streamConfig.fps!==m.fps)configure(m);
+      }
+      if(m.type==='connected')signal('Conectado à sala '+String(m.room||room.roomId).slice(-6)+'. Aguardando transmissor.');
+      if(m.type==='status'){
+        isHostOnline=Boolean(m.online);
+        if(!isHostOnline){
+          active(false);
+          $('liveBadge').textContent='● AGUARDANDO';
+          signal('Nenhum transmissor conectado nesta sala. Abra uma nova guia pelo botão Abrir no navegador.');
+        }else if(!lastDecodedAt){
+          const phase=m.phase==='configured'?'configuração recebida':'transmissor conectado';
+          signal('Servidor confirma '+phase+'. Aguardando vídeo, sem afirmar que está ao vivo.');
+          $('liveBadge').textContent='● CONECTANDO';
+        }
+      }
+      if(m.type==='relay-stats'){
+        lastRelayAt=Number(m.lastFrameAt)||0;relayFrames=Number(m.frames)||0;
+        if(isHostOnline&&!lastDecodedAt){
+          signal(lastRelayAt
+            ?'O servidor recebeu quadros, mas o player ainda não os decodificou. Confira mensagens de codec abaixo.'
+            :'Transmissor conectado, mas ainda não chegaram quadros ao servidor. Confira FPS e status na guia do navegador.');
+        }
+      }
       if(m.type==='viewers')$('audience').textContent=m.count+' / '+room.limit+' espectadores';
       return;
     }
@@ -152,7 +188,10 @@ function connect(){
     const kind=new DataView(bytes).getUint8(0);
     if(kind===2){playAudio(bytes);return;}
     if(kind!==0&&kind!==1)return;
-    if(!decoder||decoder.state!=='configured')return;
+    if(!decoder||decoder.state!=='configured'){
+      if(isHostOnline)signal('Chegaram dados de vídeo, mas o decodificador não está configurado.');
+      return;
+    }
     const view=new DataView(bytes);
     try{
       decoder.decode(new EncodedVideoChunk({type:kind===1?'key':'delta',timestamp:Number(view.getBigUint64(1)),data:bytes.slice(9)}));
@@ -160,8 +199,9 @@ function connect(){
       if(!String(err.message).includes('key frame'))feedback('Reiniciando sincronização de vídeo…');
     }
   };
-  ws.onclose=()=>{
+  ws.onclose=event=>{
     active(false);$('network').textContent='Reconectando…';
+    signal('Conexão da Activity interrompida ('+event.code+'). Tentando reconectar à sala.');
     if(decoder){decoder.close();decoder=null;}
     if(!closed)setTimeout(connect,Math.min(8000,800*2**Math.min(retries++,4)));
   };
@@ -172,5 +212,15 @@ $('fullscreen').onclick=()=>{
     canvas.parentNode.requestFullscreen?.().catch(()=>feedback('Tela cheia indisponível neste dispositivo.'));
   }else document.exitFullscreen?.();
 };
-window.addEventListener('beforeunload',()=>{closed=true;ws?.close();decoder?.close();closeAudio();});
+diagnosticTimer=setInterval(()=>{
+  if(ws?.readyState!==WebSocket.OPEN||!room)return;
+  ws.send(JSON.stringify({type:'sync'}));
+  if(isHostOnline&&lastDecodedAt&&Date.now()-lastDecodedAt>4500){
+    signal('Sem novos quadros há mais de 4 segundos. Confira se o navegador transmissor continua enviando FPS.');
+    $('liveBadge').textContent='● SEM QUADROS';
+  }
+},4000);
+window.addEventListener('beforeunload',()=>{
+  closed=true;clearInterval(diagnosticTimer);ws?.close();decoder?.close();closeAudio();
+});
 setup();
