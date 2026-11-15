@@ -73,7 +73,6 @@ jobs:
 
   publicar:
     name: Atualizar GameDeals-Live existente
-    if: ${{ vars.SQUARECLOUD_LIVE_APP_ID != '' }}
     needs: preparar
     runs-on: ubuntu-latest
     steps:
@@ -83,5 +82,7 @@ jobs:
       - name: Publicar no aplicativo Web existente
         uses: squarecloudofc/github-action@v2
         with:
-          token: ${{ secrets.SQUARECLOUD_API_KEY }}
-          command: commit --file GameDeals-Live-Web.zip ${{ vars.SQUARECLOUD_LIVE_APP_ID }} --restart
+          # Prefira uma chave restrita ao GameDeals-Live; a chave compartilhada so funciona se tiver acesso a este app.
+          token: ${{ secrets.SQUARECLOUD_LIVE_API_KEY || secrets.SQUARECLOUD_API_KEY }}
+          # ID publico da aplicacao Web da Square Cloud, nao e segredo nem ID do Discord.
+          command: commit --file GameDeals-Live-Web.zip 34b6d4f66b92425f98af015a7eeb8d87 --restart
