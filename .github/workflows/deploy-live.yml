@@ -8,6 +8,7 @@ on:
       - 'scripts/build-live.js'
       - 'package.json'
       - 'test/live.test.js'
+      - 'test/live-multistream.test.js'
       - 'test/live-quality.test.js'
       - '.github/workflows/deploy-live.yml'
   workflow_dispatch:

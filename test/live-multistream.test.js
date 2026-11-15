@@ -88,8 +88,8 @@ test('varios transmissores: cada espectador seleciona uma tela independente',asy
     hostB.close();
     await switched;
     assert.equal(room.streams.size,1);
-    assert.equal(viewerB.selectedStreamId,a.streamId);
-    assert.equal(viewerA.selectedStreamId,a.streamId);
+    // selectedStreamId pertence aos WebSockets do servidor, nao aos clientes de teste.
+    assert.ok([...room.viewers].every(v=>v.selectedStreamId===a.streamId));
   }finally{
     for(const ws of all)ws.terminate();
     await app.close();
