@@ -90,14 +90,15 @@ function startLiveServer({port=PORT,logger=console}={}) {
         if(!room)return ws.close(1008,'Sessão inválida ou expirada');
         if(role==='host'){
           if(room.broadcaster && room.broadcaster.readyState===WebSocket.OPEN)return ws.close(1008,'Já existe um transmissor');
-          room.broadcaster=ws;room.config=null;
-          emit(ws,{type:'connected',role});
-          emitRoom(room,{type:'status',online:true});
+          room.broadcaster=ws;room.config=null;room.lastFrameAt=0;room.framesIn=0;room.bytesIn=0;
+          emit(ws,{type:'connected',role,room:room.instanceId.slice(-6)});
+          emit(ws,{type:'viewers',count:room.viewers.size});
+          emitRoom(room,{type:'status',online:true,phase:'connecting'});
         } else {
           if(room.viewers.size>=rooms.MAX_VIEWERS)return ws.close(1008,'Limite de espectadores atingido');
           room.viewers.add(ws);
-          emit(ws,{type:'connected',role});
-          emit(ws,{type:'status',online:!!room.broadcaster,viewers:room.viewers.size});
+          emit(ws,{type:'connected',role,room:room.instanceId.slice(-6)});
+          emit(ws,{type:'status',online:!!room.broadcaster,phase:!room.broadcaster?'idle':room.config?'configured':'connecting',viewers:room.viewers.size});
           if(room.config)emit(ws,{type:'config',...room.config});
           emitRoom(room,{type:'viewers',count:room.viewers.size});
           emit(room.broadcaster,{type:'keyframe'});
@@ -105,7 +106,17 @@ function startLiveServer({port=PORT,logger=console}={}) {
         return;
       }
       room.lastAccess=Date.now();
-      if(role==='viewer')return;
+      if(role==='viewer'){
+        if(!isBinary){
+          let message;try{message=JSON.parse(data.toString());}catch{return;}
+          if(message.type==='sync'){
+            emit(ws,{type:'status',online:!!room.broadcaster,phase:!room.broadcaster?'idle':room.config?'configured':'connecting',viewers:room.viewers.size});
+            if(room.config)emit(ws,{type:'config',...room.config});
+            emit(ws,{type:'relay-stats',frames:room.framesIn||0,lastFrameAt:room.lastFrameAt||0,viewers:room.viewers.size});
+          }
+        }
+        return;
+      }
       if(isBinary){
         // Tipo 0/1 = quadro de video delta/keyframe; tipo 2 = audio PCM mono, 16-bit LE.
         // O servidor nao codifica, nao grava e nao reproduz o conteudo.
@@ -113,6 +124,10 @@ function startLiveServer({port=PORT,logger=console}={}) {
         const kind=data[0];
         if(kind!==0 && kind!==1 && kind!==2)return;
         if(kind===2 && !room.config.audio)return;
+        if(kind===0||kind===1){
+          room.framesIn=(room.framesIn||0)+1;room.bytesIn=(room.bytesIn||0)+data.byteLength;room.lastFrameAt=Date.now();
+          if(room.framesIn===1)emitRoom(room,{type:'status',online:true,phase:'receiving'});
+        }
         for(const v of room.viewers) if(v.readyState===WebSocket.OPEN && v.bufferedAmount<rooms.MAX_BUFFERED)v.send(data,{binary:true});
         return;
       }
@@ -127,24 +142,39 @@ function startLiveServer({port=PORT,logger=console}={}) {
           && (!message.audio || [44100,48000].includes(message.audioSampleRate))){
           room.config={codec:message.codec,width:message.width,height:message.height,fps:message.fps,
             audio:message.audio===true, audioSampleRate:message.audio===true?message.audioSampleRate:0};
+          room.framesIn=0;room.bytesIn=0;room.lastFrameAt=0;
           emitRoom(room,{type:'config',...room.config});
+          emitRoom(room,{type:'status',online:true,phase:'configured'});
+          emit(ws,{type:'config-ack',...room.config});
+        }else if(message.type==='config'){
+          emit(ws,{type:'config-error',error:'O servidor rejeitou codec, resolução, FPS ou áudio. Tente 720p/30 sem áudio para diagnosticar.'});
         }
-        if(message.type==='stop'){room.config=null;emitRoom(room,{type:'status',online:false});}
+        if(message.type==='stop'){room.config=null;room.lastFrameAt=0;emitRoom(room,{type:'status',online:false,phase:'idle'});}
       }catch{}
     });
     ws.on('close',()=>{
       if(!room)return;
       if(role==='viewer'){room.viewers.delete(ws);emitRoom(room,{type:'viewers',count:room.viewers.size});}
-      if(role==='host' && room.broadcaster===ws){room.broadcaster=null;room.config=null;emitRoom(room,{type:'status',online:false});}
+      if(role==='host' && room.broadcaster===ws){room.broadcaster=null;room.config=null;room.lastFrameAt=0;emitRoom(room,{type:'status',online:false,phase:'idle'});}
     });
     ws.on('error',()=>{});
   });
+  // Diagnóstico sem tokens: informa quadros realmente recebidos no relay.
+  const metrics=setInterval(()=>{
+    for(const room of rooms.rooms.values()){
+      if(!room.broadcaster)continue;
+      const report={type:'relay-stats',frames:room.framesIn||0,bytes:room.bytesIn||0,lastFrameAt:room.lastFrameAt||0,viewers:room.viewers.size};
+      emit(room.broadcaster,report);emitRoom(room,report);
+      room.framesIn=0;room.bytesIn=0;
+    }
+  },2000);
+  metrics.unref?.();
   const upkeep=setInterval(()=>{
     rooms.purge();for(const ws of wss.clients){if(ws.isAlive===false){ws.terminate();continue;}ws.isAlive=false;ws.ping();}
   },30_000);
   upkeep.unref?.();
   server.listen(port,'0.0.0.0',()=>logger.info?.(`GameDeals Live: HTTP/WebSocket em 0.0.0.0:${port}`));
-  server.on('close',()=>clearInterval(upkeep));
+  server.on('close',()=>{clearInterval(upkeep);clearInterval(metrics);});
   return {server,wss,rooms,close:()=>new Promise(resolve=>{for(const ws of wss.clients)ws.terminate();wss.close(()=>server.close(resolve));})};
 }
 module.exports={startLiveServer,verifyActivityInstance};
