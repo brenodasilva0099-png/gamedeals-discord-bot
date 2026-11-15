@@ -7,6 +7,15 @@ let ws=null,decoder=null,room=null,online=false,retries=0,closed=false;
 let frames=0,lastUpdate=performance.now(),streamConfig=null,audioContext=null,nextAudioAt=0;
 let isHostOnline=false,lastDecodedAt=0,lastRelayAt=0,relayFrames=0,diagnosticTimer=null;
 const signal=message=>{$('streamStatus').textContent=message;};
+function updateControls(stage){
+  const live=stage==='playing',connecting=stage==='connecting';
+  $('controlTitle').textContent=live?'Transmissão em andamento':connecting?'Conectando transmissão…':'Iniciar sua transmissão';
+  $('controlDescription').textContent=live
+    ?'O vídeo está sendo recebido na Activity. Para encerrar a transmissão, clique em Parar na guia do navegador transmissor.'
+    :connecting
+      ?'A guia transmissora foi reconhecida, mas o vídeo ainda está sendo sincronizado. Confira o estado da sala abaixo.'
+      :'Escolha onde compartilhar a tela. A captura só começa quando você autorizar a janela ou tela.';
+}
 const sdk=new DiscordSDK('1569671744803967127');
 const wsUrl=()=> (location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/live/ws';
 const active=value=>{
@@ -14,6 +23,7 @@ const active=value=>{
   $('liveBadge').classList.toggle('active',value);
   $('liveBadge').textContent=value?'● AO VIVO':'● AGUARDANDO';
   canvas.parentNode.classList.toggle('streaming',value);
+  updateControls(value?'playing':isHostOnline?'connecting':'idle');
   if(!value){
     $('quality').textContent='Sem vídeo';
     canvas.width=1;canvas.height=1;
@@ -138,6 +148,7 @@ function configure({codec,width,height,fps,audio=false,audioSampleRate=0}){
     // O player só anuncia vídeo ativo depois de decodificar o primeiro quadro.
     canvas.parentNode.classList.remove('streaming');
     $('liveBadge').textContent='● AGUARDANDO QUADROS';
+    updateControls('connecting');
     signal('Configuração '+width+'×'+height+' recebida. Aguardando os primeiros quadros de vídeo.');
     ws?.send(JSON.stringify({type:'sync'}));
   }catch(e){
@@ -170,6 +181,7 @@ function connect(){
           const phase=m.phase==='configured'?'configuração recebida':'transmissor conectado';
           signal('Servidor confirma '+phase+'. Aguardando vídeo, sem afirmar que está ao vivo.');
           $('liveBadge').textContent='● CONECTANDO';
+          updateControls('connecting');
         }
       }
       if(m.type==='relay-stats'){

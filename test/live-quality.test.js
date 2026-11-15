@@ -144,3 +144,13 @@ test('transmissor recebe quantidade de espectadores mesmo durante handshake',()=
   assert.ok(js.includes("if(msg.type==='viewers')viewersConnected=Number(msg.count)||0"));
   assert.ok(js.includes('describeRelay();'));
 });
+
+test('Activity deixa de pedir para iniciar quando o video realmente comeca',()=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const html=fs.readFileSync(path.join(__dirname,'../live/public/activity.html'),'utf8');
+  const client=fs.readFileSync(path.join(__dirname,'../live/client-source.js'),'utf8');
+  assert.ok(html.includes('id="controlTitle"'));
+  assert.ok(html.includes('id="controlDescription"'));
+  assert.ok(client.includes('Transmissão em andamento'));
+  assert.ok(client.includes('updateControls(value?'));
+});
