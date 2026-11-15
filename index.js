@@ -565,8 +565,9 @@ async function poll() {
 }
 
 // Quando o relay estiver numa aplicação Web separada, o worker só inicia a Activity no Discord.
-// LIVE_EXTERNAL=1 preserva o botão e o Entry Point, mas evita gastar RAM com servidor HTTP local.
-if (process.env.ENABLE_LIVE==='1' && process.env.LIVE_EXTERNAL!=='1') {
+// No worker, nao iniciar relay HTTP/WebSocket interno por padrao. ENABLE_LIVE ativa o botao e o Entry Point.
+// LIVE_INTERNAL=1 opta pelo relay local; LIVE_EXTERNAL=1 desativa-o explicitamente.
+if (process.env.ENABLE_LIVE==='1' && process.env.LIVE_INTERNAL==='1' && process.env.LIVE_EXTERNAL!=='1') {
   try {
     if(!require('node:fs').existsSync(require('node:path').join(__dirname,'live/public/client.js'))) require('./scripts/build-live');
     startLiveServer();

@@ -1,0 +1,86 @@
+name: Preparar e publicar GameDeals-Live (Web)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'live/**'
+      - 'live-web/**'
+      - 'scripts/build-live.js'
+      - 'package.json'
+      - '.github/workflows/deploy-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gamedeals-live-web-production
+  cancel-in-progress: false
+
+jobs:
+  preparar:
+    name: Compilar, testar e gerar ZIP da Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Instalar dependencias para compilar o front-end
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Compilar Activity com SDK do Discord
+        run: |
+          npm run build:live
+          test -s live/public/client.js
+      - name: Rodar testes existentes
+        run: npm test
+      - name: Montar pacote da aplicacao Web independente
+        run: |
+          mkdir -p stage/live stage/scripts
+          cp live-web/index.js live-web/package.json live-web/squarecloud.app stage/
+          cp live/server.js live/rooms.js stage/live/
+          cp -R live/public stage/live/
+          test -s stage/live/public/client.js
+          (cd stage && npm install --omit=dev --ignore-scripts --no-audit --no-fund)
+      - name: Testar rotas HTTP da nova aplicacao
+        run: |
+          (cd stage && PORT=18765 node index.js > ../live-web-test.log 2>&1 & echo $! > ../live-web-test.pid)
+          for i in 1 2 3 4 5 6 7 8; do
+            if curl --fail --silent http://127.0.0.1:18765/health | grep -q '"live":true'; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:18765/health | grep -q '"ok":true'
+          curl --fail --silent http://127.0.0.1:18765/live/ | grep -q 'GAMEDEALS'
+          curl --fail --silent http://127.0.0.1:18765/live/client.js | grep -q 'Discord'
+          curl --fail --silent http://127.0.0.1:18765/live/broadcast | grep -q '<html'
+          kill $(cat live-web-test.pid) || true
+      - name: Criar ZIP pronto para envio inicial pelo painel
+        run: |
+          (cd stage && zip -q -r "$GITHUB_WORKSPACE/GameDeals-Live-Web.zip" \
+            index.js package.json squarecloud.app live)
+          test -s GameDeals-Live-Web.zip
+          unzip -l GameDeals-Live-Web.zip
+          if unzip -Z1 GameDeals-Live-Web.zip | grep -E '(^|/)(node_modules|data|\.env)(/|$)'; then
+            echo "::error::Arquivo privado no pacote"; exit 1
+          fi
+      - name: Disponibilizar ZIP compilado
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameDeals-Live-Web-Publicar
+          path: GameDeals-Live-Web.zip
+          retention-days: 30
+
+  publicar:
+    name: Atualizar GameDeals-Live existente
+    if: ${{ vars.SQUARECLOUD_LIVE_APP_ID != '' }}
+    needs: preparar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: GameDeals-Live-Web-Publicar
+      - name: Publicar no aplicativo Web existente
+        uses: squarecloudofc/github-action@v2
+        with:
+          token: ${{ secrets.SQUARECLOUD_API_KEY }}
+          command: commit --file GameDeals-Live-Web.zip ${{ vars.SQUARECLOUD_LIVE_APP_ID }} --restart

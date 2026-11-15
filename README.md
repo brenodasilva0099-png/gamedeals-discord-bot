@@ -150,3 +150,19 @@ Referências: https://squarecloud.app/en/resources/github-action e https://squar
 Se o bot estiver como worker e a Activity for hospedada em outra aplicação Web, defina **no GameDeals-Bot** `ENABLE_LIVE=1` e `LIVE_EXTERNAL=1`. Assim o botão **Transmitir tela** e o comando global de entrada continuam registrados, mas o worker não executa mais o relay HTTP/WebSocket que não possui domínio. Na nova aplicação Web, `live/server.js` precisa ser iniciado via um arquivo de entrada próprio (`startLiveServer()`), com publicação Web habilitada no primeiro envio.
 
 No Hobby de 1 GB, 512 MB + 512 MB cabem na cota total, mas só reduza a memória alocada ao bot após verificar o pico real do processo, com folga suficiente. O arquivo `squarecloud.app` do bot ainda mostra memória de 1024 MB; a alocação vigente deve ser verificada/alterada diretamente no painel.
+
+## Web GameDeals Live separada (Hobby 1 GB)
+
+A aplicacao Web fica em `live-web/`, enquanto a interface/servidor usam a fonte `live/`.
+O workflow `Preparar e publicar GameDeals-Live (Web)` compila o SDK, valida `/health` e a pagina, e gera o artefato `GameDeals-Live-Web-Publicar` com `GameDeals-Live-Web.zip` pronto para upload. Esse ZIP nao contem credenciais, banco de dados, dependencias do bot nem `node_modules`.
+
+No **primeiro upload**, em Square Cloud escolha criar **nova aplicacao Web**, ative *Publicacao na Web*, use subdominio `gamedeals`, `MAIN=index.js`, RAM 512 MB. No aplicativo WEB, configure em variaveis privadas:
+- `DISCORD_TOKEN` = token do bot GameDeals ja existente (nao salvar em repo).
+- `DISCORD_APPLICATION_ID=1569671744803967127`
+- `ACTIVITY_PUBLIC_URL=https://gamedeals.squareweb.app`
+
+No GameDeals-Bot, mantenha `ENABLE_LIVE=1`. O worker **nao inicia HTTP/WebSocket por padrao**: `LIVE_INTERNAL=1` seria necessario para testes locais, nunca para o worker. Apos criar a Web, configure a variavel GitHub `SQUARECLOUD_LIVE_APP_ID` com o ID da NOVA aplicacao e conceda a chave `SQUARECLOUD_API_KEY` escopo para deployment/restart **tambem da Web**. A cada push relevante, o novo workflow publica somente a Web.
+
+No Discord Developer Portal, Activities > URL Mappings: prefix `/` para `gamedeals.squareweb.app`, SSL ativo, sem override localhost. Confirme `https://gamedeals.squareweb.app/health` antes de abrir a Activity.
+
+O GameDeals Live atual transmite **video, sem audio**.

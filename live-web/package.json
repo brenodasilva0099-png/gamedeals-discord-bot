@@ -1,0 +1,17 @@
+{
+  "name": "gamedeals-live-web",
+  "version": "0.5.3",
+  "private": true,
+  "description": "Servidor web isolado da Discord Activity GameDeals Live",
+  "main": "index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
