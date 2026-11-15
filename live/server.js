@@ -2,6 +2,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const {createRooms,validInstance} = require('./rooms');
 
 const ROOT=path.join(__dirname,'public');
@@ -67,7 +68,6 @@ function startLiveServer({port=PORT,logger=console}={}) {
   server.on('upgrade',(req,socket,head)=>{
     const pathname=new URL(req.url,'http://local.invalid').pathname;
     if(pathname!=='/live/ws')return socket.destroy();
-    // Só clientes da própria Activity ou página HTTPS hospedada são autorizados.
     const origin=req.headers.origin||'';
     const expected=(process.env.ACTIVITY_PUBLIC_URL||'').replace(/\/$/,'');
     const isDiscord=/^https:\/\/[0-9]+\.discordsays\.com$/.test(origin);
@@ -75,97 +75,162 @@ function startLiveServer({port=PORT,logger=console}={}) {
     if(!isDiscord && !isHost)return socket.destroy();
     wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));
   });
-  const emit=(ws,obj)=>{if(ws && ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(obj));};
-  function emitRoom(room,body){for(const v of room.viewers)emit(v,body);}
+  const emit=(ws,obj)=>{if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify(obj));};
+  const streamSummary=room=>[...room.streams.values()].map(s=>({
+    id:s.id,label:s.label,online:!!s.config,phase:s.config?(s.lastFrameAt?'receiving':'configured'):'connecting'
+  }));
+  function sendStreamList(room){
+    const items=streamSummary(room);
+    for(const v of room.viewers)emit(v,{type:'stream-list',streams:items,selectedStreamId:v.selectedStreamId||null});
+  }
+  function audienceCount(room){
+    for(const s of room.streams.values())emit(s.ws,{type:'viewers',count:room.viewers.size});
+    for(const v of room.viewers)emit(v,{type:'viewers',count:room.viewers.size});
+  }
+  function selectedStream(room,viewer){
+    return viewer.selectedStreamId?room.streams.get(viewer.selectedStreamId):null;
+  }
+  function notifySelection(viewer,room,{requestKeyframe=false}={}){
+    const s=selectedStream(room,viewer);
+    emit(viewer,{type:'stream-selected',streamId:s?.id||null});
+    emit(viewer,{type:'status',online:!!s,phase:!s?'idle':!s.config?'connecting':s.lastFrameAt?'receiving':'configured',viewers:room.viewers.size});
+    if(s?.config)emit(viewer,{type:'config',...s.config});
+    if(s)emit(viewer,{type:'relay-stats',frames:s.framesIn||0,lastFrameAt:s.lastFrameAt||0,viewers:room.viewers.size});
+    if(s&&requestKeyframe)emit(s.ws,{type:'keyframe'});
+  }
+  function notifySelected(room,streamId,payload){
+    for(const viewer of room.viewers){
+      if(viewer.selectedStreamId===streamId)emit(viewer,payload);
+    }
+  }
+  function connectHost(ws,room){
+    if(room.streams.size>=rooms.MAX_STREAMS)return ws.close(1008,'Limite de transmissões simultâneas');
+    const id=crypto.randomBytes(8).toString('hex');
+    const label='Tela '+(++room.streamSerial);
+    const source={id,label,ws,config:null,lastFrameAt:0,framesIn:0,bytesIn:0};
+    ws.source=source;room.streams.set(id,source);
+    room.broadcaster=room.streams.values().next().value?.ws||null; // compatibilidade com sala legada
+    emit(ws,{type:'connected',role:'host',room:room.instanceId.slice(-6),streamId:id,label});
+    emit(ws,{type:'viewers',count:room.viewers.size});
+    for(const v of room.viewers){
+      if(!v.selectedStreamId){v.selectedStreamId=id;notifySelection(v,room,{requestKeyframe:true});}
+    }
+    sendStreamList(room);
+  }
+  function connectViewer(ws,room){
+    if(room.viewers.size>=rooms.MAX_VIEWERS)return ws.close(1008,'Limite de espectadores atingido');
+    room.viewers.add(ws);
+    ws.selectedStreamId=room.streams.keys().next().value||null;
+    emit(ws,{type:'connected',role:'viewer',room:room.instanceId.slice(-6)});
+    sendStreamList(room);
+    notifySelection(ws,room,{requestKeyframe:true});
+    audienceCount(room);
+  }
   wss.on('connection',ws=>{
-    let room=null,role=null;ws.isAlive=true;
+    let room=null,role=null;
+    ws.isAlive=true;
     ws.on('pong',()=>{ws.isAlive=true;});
     ws.on('message',(data,isBinary)=>{
-      if(!room) {
+      if(!room){
         if(isBinary)return ws.close(1008,'Protocolo inválido');
         let hello;try{hello=JSON.parse(data.toString());}catch{return ws.close(1008,'JSON inválido');}
         role=hello.role==='host'?'host':hello.role==='viewer'?'viewer':null;
         if(!role)return ws.close(1008,'Papel inválido');
         room=rooms.lookup(hello.roomId,hello.token,role);
         if(!room)return ws.close(1008,'Sessão inválida ou expirada');
-        if(role==='host'){
-          if(room.broadcaster && room.broadcaster.readyState===WebSocket.OPEN)return ws.close(1008,'Já existe um transmissor');
-          room.broadcaster=ws;room.config=null;room.lastFrameAt=0;room.framesIn=0;room.bytesIn=0;
-          emit(ws,{type:'connected',role,room:room.instanceId.slice(-6)});
-          emit(ws,{type:'viewers',count:room.viewers.size});
-          emitRoom(room,{type:'status',online:true,phase:'connecting'});
-        } else {
-          if(room.viewers.size>=rooms.MAX_VIEWERS)return ws.close(1008,'Limite de espectadores atingido');
-          room.viewers.add(ws);
-          emit(ws,{type:'connected',role,room:room.instanceId.slice(-6)});
-          emit(ws,{type:'status',online:!!room.broadcaster,phase:!room.broadcaster?'idle':room.config?'configured':'connecting',viewers:room.viewers.size});
-          if(room.config)emit(ws,{type:'config',...room.config});
-          emitRoom(room,{type:'viewers',count:room.viewers.size});
-          emit(room.broadcaster,{type:'keyframe'});
-        }
+        if(role==='host')connectHost(ws,room);else connectViewer(ws,room);
         return;
       }
       room.lastAccess=Date.now();
       if(role==='viewer'){
-        if(!isBinary){
-          let message;try{message=JSON.parse(data.toString());}catch{return;}
-          if(message.type==='sync'){
-            emit(ws,{type:'status',online:!!room.broadcaster,phase:!room.broadcaster?'idle':room.config?'configured':'connecting',viewers:room.viewers.size});
-            if(room.config)emit(ws,{type:'config',...room.config});
-            emit(ws,{type:'relay-stats',frames:room.framesIn||0,lastFrameAt:room.lastFrameAt||0,viewers:room.viewers.size});
-          }
+        if(isBinary)return;
+        let m;try{m=JSON.parse(data.toString());}catch{return;}
+        if(m.type==='sync'){
+          sendStreamList(room);
+          notifySelection(ws,room);
+        }
+        if(m.type==='select-stream'&&typeof m.streamId==='string'){
+          if(!room.streams.has(m.streamId))return emit(ws,{type:'stream-error',error:'Esta transmissão não está mais disponível.'});
+          ws.selectedStreamId=m.streamId;
+          notifySelection(ws,room,{requestKeyframe:true});
+          sendStreamList(room);
         }
         return;
       }
+      const source=ws.source;
+      if(!source||room.streams.get(source.id)!==source)return;
       if(isBinary){
-        // Tipo 0/1 = quadro de video delta/keyframe; tipo 2 = audio PCM mono, 16-bit LE.
-        // O servidor nao codifica, nao grava e nao reproduz o conteudo.
-        if(!room.config||data.byteLength>rooms.MAX_FRAME_BYTES||data.byteLength<10)return;
+        if(!source.config||data.byteLength>rooms.MAX_FRAME_BYTES||data.byteLength<10)return;
         const kind=data[0];
-        if(kind!==0 && kind!==1 && kind!==2)return;
-        if(kind===2 && !room.config.audio)return;
+        if(kind!==0&&kind!==1&&kind!==2)return;
+        if(kind===2&&!source.config.audio)return;
         if(kind===0||kind===1){
-          room.framesIn=(room.framesIn||0)+1;room.bytesIn=(room.bytesIn||0)+data.byteLength;room.lastFrameAt=Date.now();
-          if(room.framesIn===1)emitRoom(room,{type:'status',online:true,phase:'receiving'});
+          source.framesIn++;source.bytesIn+=data.byteLength;source.lastFrameAt=Date.now();
+          if(source.framesIn===1)notifySelected(room,source.id,{type:'status',online:true,phase:'receiving'});
         }
-        for(const v of room.viewers) if(v.readyState===WebSocket.OPEN && v.bufferedAmount<rooms.MAX_BUFFERED)v.send(data,{binary:true});
+        for(const v of room.viewers){
+          if(v.selectedStreamId===source.id&&v.readyState===WebSocket.OPEN&&v.bufferedAmount<rooms.MAX_BUFFERED)v.send(data,{binary:true});
+        }
         return;
       }
-      try{
-        const message=JSON.parse(data.toString());
-        if(message.type==='config'
-          && ['vp8','avc1.640033','avc1.42E01E'].includes(message.codec)
-          && Number.isInteger(message.height) && message.height>=180 && message.height<=1440 && message.height%2===0
-          && Number.isInteger(message.width) && message.width>=320 && message.width<=2560 && message.width%2===0
-          && [15,30,60].includes(message.fps)
-          && [false,true,undefined].includes(message.audio)
-          && (!message.audio || [44100,48000].includes(message.audioSampleRate))){
-          room.config={codec:message.codec,width:message.width,height:message.height,fps:message.fps,
-            audio:message.audio===true, audioSampleRate:message.audio===true?message.audioSampleRate:0};
-          room.framesIn=0;room.bytesIn=0;room.lastFrameAt=0;
-          emitRoom(room,{type:'config',...room.config});
-          emitRoom(room,{type:'status',online:true,phase:'configured'});
-          emit(ws,{type:'config-ack',...room.config});
-        }else if(message.type==='config'){
-          emit(ws,{type:'config-error',error:'O servidor rejeitou codec, resolução, FPS ou áudio. Tente 720p/30 sem áudio para diagnosticar.'});
-        }
-        if(message.type==='stop'){room.config=null;room.lastFrameAt=0;emitRoom(room,{type:'status',online:false,phase:'idle'});}
-      }catch{}
+      let message;try{message=JSON.parse(data.toString());}catch{return;}
+      if(message.type==='label'&&typeof message.label==='string'){
+        const label=message.label.trim().slice(0,48);
+        if(label){source.label=label;sendStreamList(room);}
+        return;
+      }
+      if(message.type==='config'
+        && ['vp8','avc1.640033','avc1.42E01E'].includes(message.codec)
+        && Number.isInteger(message.height)&&message.height>=180&&message.height<=1440&&message.height%2===0
+        && Number.isInteger(message.width)&&message.width>=320&&message.width<=2560&&message.width%2===0
+        && [15,30,60].includes(message.fps)
+        && [false,true,undefined].includes(message.audio)
+        && (!message.audio||[44100,48000].includes(message.audioSampleRate))){
+        source.config={codec:message.codec,width:message.width,height:message.height,fps:message.fps,
+          audio:message.audio===true,audioSampleRate:message.audio===true?message.audioSampleRate:0};
+        source.framesIn=0;source.bytesIn=0;source.lastFrameAt=0;
+        notifySelected(room,source.id,{type:'config',...source.config});
+        notifySelected(room,source.id,{type:'status',online:true,phase:'configured'});
+        emit(ws,{type:'config-ack',...source.config});
+        sendStreamList(room);
+      }else if(message.type==='config'){
+        emit(ws,{type:'config-error',error:'O servidor rejeitou codec, resolução, FPS ou áudio. Tente 720p/30 sem áudio para diagnosticar.'});
+      }
+      if(message.type==='stop'){
+        source.config=null;source.lastFrameAt=0;
+        notifySelected(room,source.id,{type:'status',online:false,phase:'idle'});
+        sendStreamList(room);
+      }
     });
     ws.on('close',()=>{
       if(!room)return;
-      if(role==='viewer'){room.viewers.delete(ws);emitRoom(room,{type:'viewers',count:room.viewers.size});}
-      if(role==='host' && room.broadcaster===ws){room.broadcaster=null;room.config=null;room.lastFrameAt=0;emitRoom(room,{type:'status',online:false,phase:'idle'});}
+      if(role==='viewer'){
+        room.viewers.delete(ws);audienceCount(room);
+      }
+      if(role==='host'&&ws.source&&room.streams.get(ws.source.id)===ws.source){
+        const removed=ws.source.id;
+        room.streams.delete(removed);
+        room.broadcaster=room.streams.values().next().value?.ws||null;
+        const next=room.streams.keys().next().value||null;
+        for(const v of room.viewers){
+          if(v.selectedStreamId===removed){
+            v.selectedStreamId=next;
+            notifySelection(v,room,{requestKeyframe:true});
+          }
+        }
+        sendStreamList(room);
+      }
     });
     ws.on('error',()=>{});
   });
-  // Diagnóstico sem tokens: informa quadros realmente recebidos no relay.
   const metrics=setInterval(()=>{
     for(const room of rooms.rooms.values()){
-      if(!room.broadcaster)continue;
-      const report={type:'relay-stats',frames:room.framesIn||0,bytes:room.bytesIn||0,lastFrameAt:room.lastFrameAt||0,viewers:room.viewers.size};
-      emit(room.broadcaster,report);emitRoom(room,report);
-      room.framesIn=0;room.bytesIn=0;
+      for(const source of room.streams.values()){
+        const report={type:'relay-stats',frames:source.framesIn,bytes:source.bytesIn,lastFrameAt:source.lastFrameAt,viewers:room.viewers.size};
+        emit(source.ws,report);
+        notifySelected(room,source.id,report);
+        source.framesIn=0;source.bytesIn=0;
+      }
     }
   },2000);
   metrics.unref?.();

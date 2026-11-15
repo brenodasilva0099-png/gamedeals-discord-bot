@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 
 const MAX_ROOMS = 5;
 const MAX_VIEWERS = 4;
+const MAX_STREAMS = 4;
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_BUFFERED = 4 * 1024 * 1024;
 const ROOM_TTL = 2 * 60 * 60 * 1000;
@@ -19,6 +20,7 @@ function createRooms(now=()=>Date.now()) {
   function purge() {
     for (const [id,room] of rooms) {
       if (now()-room.lastAccess>ROOM_TTL) {
+        for(const source of room.streams?.values()||[])source.ws?.close(1001,'Sessão expirada');
         room.broadcaster?.close(1001,'Sessão expirada');
         for(const viewer of room.viewers) viewer.close(1001,'Sessão expirada');
         rooms.delete(id);
@@ -31,7 +33,7 @@ function createRooms(now=()=>Date.now()) {
     let room=rooms.get(id);
     if(!room) {
       if(rooms.size>=MAX_ROOMS)throw Error('Todas as salas estão ocupadas');
-      room={instanceId:id,viewerToken:randomToken(),hostToken:randomToken(),broadcaster:null,viewers:new Set(),config:null,lastAccess:now(),created:now()};
+      room={instanceId:id,viewerToken:randomToken(),hostToken:randomToken(),broadcaster:null,streams:new Map(),streamSerial:0,viewers:new Set(),config:null,lastAccess:now(),created:now()};
       rooms.set(id,room);
     }
     room.lastAccess=now();
@@ -44,6 +46,6 @@ function createRooms(now=()=>Date.now()) {
     if(ok)room.lastAccess=now();
     return ok?room:null;
   }
-  return {rooms,getOrCreate,lookup,purge,MAX_VIEWERS,MAX_FRAME_BYTES,MAX_BUFFERED};
+  return {rooms,getOrCreate,lookup,purge,MAX_VIEWERS,MAX_STREAMS,MAX_FRAME_BYTES,MAX_BUFFERED};
 }
-module.exports={createRooms,validInstance,safeEqual,MAX_ROOMS,MAX_VIEWERS,MAX_FRAME_BYTES};
+module.exports={createRooms,validInstance,safeEqual,MAX_ROOMS,MAX_VIEWERS,MAX_STREAMS,MAX_FRAME_BYTES};
