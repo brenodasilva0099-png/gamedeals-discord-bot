@@ -9,6 +9,7 @@ const dbApi = require('./db');
 const stores = require('./store');
 const shark = require('./cheapshark');
 const engine=require('./deal-engine');
+const crypto=require('node:crypto');
 const {coverFor} = require('./media');
 const {startLiveServer} = require('./live/server');
 const {ensureEntryPoint} = require('./live/entry-point');
@@ -24,6 +25,8 @@ const DEFAULT_DISCOUNT = Math.max(0, Math.min(100, Number(process.env.MIN_DISCOU
 const WISHLIST_CHECK_LIMIT = Math.max(1, Math.min(30, Number(process.env.WISHLIST_CHECK_LIMIT) || 12));
 const OFFER_PAGE_SIZE = 2; // Dois jogos grandes por pagina: o Discord nao amplia thumbnails automaticamente.
 const SEARCH_PREVIEW_SIZE = 2;
+const searchSessions=new Map();
+const SEARCH_SESSION_TTL=20*60000;
 const STORE_CARDS_PER_PAGE = 2;
 let pollActive = false;
 let lastManualPoll = 0;
@@ -114,13 +117,61 @@ function productCard(o, index) {
 function shopLink(o) {
   return new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(o.url).setLabel(`Abrir na ${shopName(o.source)}`).setEmoji('🛒'));
 }
-function searchResultsView(query, results) {
-  if (!results.length) return {embeds:[intro('🔎 Nenhum jogo encontrado',`Não encontramos títulos para **${short(query,80)}**. Tente outro nome.`)],components:rows(btn('gd:search','Pesquisar novamente',ButtonStyle.Primary,'🔎'))};
-  const list=results.slice(0,25);
-  const embeds=[intro('🔎 Resultados para '+short(query,150),`**${list.length} oferta(s)** encontradas em lojas consultadas • ${Math.min(list.length,SEARCH_PREVIEW_SIZE)} banners em destaque.\nPreços em **R$** (Steam) ou **US$** (outras lojas), sem conversão fictícia. Escolha um resultado no seletor.`),...list.slice(0,SEARCH_PREVIEW_SIZE).map((o,i)=>productCard({offer_key:o.key,...o,price_cents:o.priceCents},i+1))];
-  return {embeds,components:[
-    new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('gd:lookup').setPlaceholder('🎮 Escolha um jogo ou edição').addOptions(list.map(o=>({label:short(o.title,95),description:short(`${stores.formatMoney(o.priceCents,o.currency)}${o.discount?` • -${o.discount}%`:''} • ${shopName(o.source)}`,100),value:o.key})))),
-    ...rows(btn('gd:search','Pesquisar outro jogo',ButtonStyle.Secondary,'🔎'))]};
+// Pesquisa privada com filtros por loja, moeda e ordenacao.
+function createSearchSession(userId,query,results){
+  const id=crypto.randomBytes(8).toString('hex');
+  const now=Date.now();
+  for(const [key,v] of searchSessions){
+    if(now-v.createdAt>SEARCH_SESSION_TTL)searchSessions.delete(key);
+  }
+  if(searchSessions.size>=150)searchSessions.delete(searchSessions.keys().next().value);
+  searchSessions.set(id,{userId,query,results,createdAt:now,sort:'relevance',store:'all',currency:'all',sale:false});
+  return id;
+}
+function searchResultsView(query,results,sessionId=null){
+  const session=sessionId?searchSessions.get(sessionId):null;
+  let list=engine.orderOffers(results,session?.sort,session?.currency,session?.sale);
+  if(session?.store==='steam')list=list.filter(o=>o.source==='steam');
+  if(session?.store==='partners')list=list.filter(o=>String(o.source).startsWith('cs:'));
+  list=list.slice(0,25);
+  if(!list.length)return {
+    embeds:[intro('🔎 Nenhum resultado',session?'Nenhum item com os filtros escolhidos. Use **Todas as lojas** e **Todos os valores** para ampliar a pesquisa.':'Tente outro nome de jogo.')],
+    components:session?[...rows(btn('gd:searchreset:'+sessionId,'Limpar filtros',ButtonStyle.Primary,'🔄'))]:rows(btn('gd:search','Pesquisar novamente',ButtonStyle.Primary,'🔎'))
+  };
+  const filters=session?' • '+(session.store==='all'?'Todas as lojas':session.store==='steam'?'Steam':'Lojas parceiras')+
+    ' • '+(session.currency==='all'?'BRL + USD':session.currency)+' • '+(session.sale?'Promoções':'Todos os resultados'):'';
+  const embeds=[intro('🔎 Resultados para '+short(query,150),
+    '**'+list.length+' item(ns)** consultados • '+Math.min(list.length,SEARCH_PREVIEW_SIZE)+
+    ' banners em destaque. Moedas mantidas separadas para não simular conversão. '+filters+
+    '\nEscolha um resultado no seletor para ver o preço e acompanhar o jogo.'),
+    ...list.slice(0,SEARCH_PREVIEW_SIZE).map((o,i)=>productCard({offer_key:o.key,...o,price_cents:o.priceCents},i+1))];
+  const components=[new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId('gd:lookup').setPlaceholder('🎮 Escolha um jogo ou edição')
+      .addOptions(list.map(o=>({label:short(o.title,95),
+        description:short(stores.formatMoney(o.priceCents,o.currency)+' • '+(o.discount?'-'+o.discount+'% • ':'')+shopName(o.source),100),
+        value:o.key})))
+  )];
+  if(session){
+    components.push(...rows(
+      btn('gd:sort:'+sessionId+':relevance','Relevância',ButtonStyle.Secondary,'🔎'),
+      btn('gd:sort:'+sessionId+':discount','Maior desconto',ButtonStyle.Secondary,'🏷️'),
+      btn('gd:sort:'+sessionId+':price','Menor preço por moeda',ButtonStyle.Secondary,'💰')
+    ));
+    components.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId('gd:filters:'+sessionId).setPlaceholder('🎛️ Filtros de loja, moeda e promoção')
+        .addOptions([
+          {label:'Todas as lojas',value:'store:all'},
+          {label:'Apenas Steam',value:'store:steam'},
+          {label:'Outras lojas',value:'store:partners'},
+          {label:'Todas as moedas',value:'currency:all'},
+          {label:'Apenas reais (BRL)',value:'currency:BRL'},
+          {label:'Apenas dólares (USD)',value:'currency:USD'},
+          {label:session.sale?'Incluir jogos sem desconto':'Somente jogos em promoção',value:'sale:toggle'}
+        ])
+    ));
+  }
+  components.push(...rows(btn('gd:search','Pesquisar outro jogo',ButtonStyle.Secondary,'🔎')));
+  return {embeds,components};
 }
 async function findAllGames(query) {
   const results=await Promise.allSettled([findGames(query),shark.searchByTitle(query)]);
@@ -170,7 +221,7 @@ async function onBuscarCommand(i) {
     return i.editReply(offerView(offer,i.user.id));
   }
   if(value.length<2)return i.editReply('Digite ao menos 2 letras para pesquisar.');
-  try {return i.editReply(searchResultsView(value,await findAllGames(value)));}
+  try {const offers=await findAllGames(value);const sid=createSearchSession(i.user.id,value,offers);return i.editReply(searchResultsView(value,offers,sid));}
   catch(err){log('Falha na pesquisa:',err.message);return i.editReply('Não foi possível consultar a Steam agora. Tente novamente.');}
 }
 async function registerGuildCommand(guild) {
@@ -274,8 +325,8 @@ function compareView(key) {
   if(!product)return {content:'Produto não encontrado. Faça uma nova pesquisa.'};
   const normalized=stores.cleanName(product.title);
   // Títulos e edições estritamente iguais. Não presumir que versões diferentes sejam equivalentes.
-  const catalog=db.prepare('SELECT * FROM offers WHERE seen_at>? LIMIT 500').all(Date.now()-7*86400000);
-  const matches=catalog.filter(o=>stores.cleanName(o.title)===normalized && o.kind===product.kind);
+  const catalog=db.prepare('SELECT * FROM offers WHERE seen_at>? AND discount>0 LIMIT 500').all(Date.now()-7*86400000);
+  const matches=catalog.filter(o=>stores.cleanName(o.title)===normalized && o.kind===product.kind && engine.validOffer(o));
   const unique=[...new Map([product,...matches].map(o=>[o.offer_key,o])).values()];
   const currencies=[...new Set(unique.map(o=>o.currency))];
   const description=currencies.map(currency=>{
@@ -297,7 +348,15 @@ function canAdmin(i){return Boolean(i.memberPermissions?.has(PermissionFlagsBits
 
 async function onButton(i) {
   const id=i.customId;
-  if(id==='gd:search') return i.showModal(modal('gd:search:submit','Pesquisar nas lojas','Nome do jogo','Ex.: Red Dead Redemption 2'));
+  if(id.startsWith('gd:sort:')||id.startsWith('gd:searchreset:')){
+     const parts=id.split(':'),token=parts[2],session=searchSessions.get(token);
+     if(!session||session.userId!==i.user.id||Date.now()-session.createdAt>SEARCH_SESSION_TTL)
+       return interactionReply(i,{content:'Pesquisa expirada. Pesquise novamente.'});
+     if(parts[1]==='searchreset'){session.store='all';session.currency='all';session.sale=false;session.sort='relevance';}
+     else if(['relevance','price','discount'].includes(parts[3]))session.sort=parts[3];
+     return i.update(searchResultsView(session.query,session.results,token));
+   }
+   if(id==='gd:search') return i.showModal(modal('gd:search:submit','Pesquisar nas lojas','Nome do jogo','Ex.: Red Dead Redemption 2'));
   if(id==='gd:live') {
     if(process.env.ENABLE_LIVE!=='1')return interactionReply(i,{content:'📺 A GameDeals Activity ainda não foi habilitada na Square Cloud. Configure a publicação web e a Activity no Discord Developer Portal.'});
     try { if(typeof i.launchActivity!=='function')throw Error('discord.js desatualizado'); return await i.launchActivity(); }
@@ -397,7 +456,18 @@ async function onButton(i) {
 
 async function onSelect(i) {
   const id=i.customId,val=i.values[0];
-  if(id==='gd:store:select') {
+  if(id.startsWith('gd:filters:')){
+     const token=id.slice('gd:filters:'.length),session=searchSessions.get(token);
+     if(!session||session.userId!==i.user.id||Date.now()-session.createdAt>SEARCH_SESSION_TTL)
+       return interactionReply(i,{content:'Pesquisa expirada. Pesquise novamente.'});
+     if(val==='sale:toggle')session.sale=!session.sale;
+     else {const [kind,choice]=val.split(':');
+       if(kind==='store'&&['all','steam','partners'].includes(choice))session.store=choice;
+       if(kind==='currency'&&['all','BRL','USD'].includes(choice))session.currency=choice;
+     }
+     return i.update(searchResultsView(session.query,session.results,token));
+   }
+   if(id==='gd:store:select') {
     await i.deferUpdate();
     if(val.startsWith('pending:'))return i.editReply(pendingStoreView(val.slice('pending:'.length)));
     if(!val.startsWith('store:'))return i.editReply({content:'Loja nao reconhecida.',embeds:[],components:rows(btn('gd:stores','Escolher loja',ButtonStyle.Primary,'🏬'))});
