@@ -6,6 +6,13 @@ const canvas=$('video'),ctx=canvas.getContext('2d',{alpha:false});
 let ws=null,decoder=null,room=null,online=false,retries=0,closed=false;
 let frames=0,lastUpdate=performance.now(),streamConfig=null,audioContext=null,nextAudioAt=0;
 let isHostOnline=false,lastDecodedAt=0,lastRelayAt=0,relayFrames=0,diagnosticTimer=null;
+let requireKeyframe=true,resyncOnKeyframe=false,lastKeyframeRequestAt=0,decodeOverruns=0;
+function requestKeyframe(){
+  if(!isHostOnline||ws?.readyState!==WebSocket.OPEN)return;
+  if(Date.now()-lastKeyframeRequestAt<900)return;
+  lastKeyframeRequestAt=Date.now();
+  ws.send(JSON.stringify({type:'request-keyframe'}));
+}
 let selectedStreamId=null;
 const streamPicker=$('streamPicker');
 function switchStream(streamId){
@@ -13,6 +20,7 @@ function switchStream(streamId){
   selectedStreamId=streamId;
   if(decoder){try{decoder.close();}catch{}decoder=null;}
   isHostOnline=false;lastDecodedAt=0;lastRelayAt=0;relayFrames=0;
+  requireKeyframe=true;resyncOnKeyframe=true;lastKeyframeRequestAt=0;
   active(false);
   signal(streamId?'Mudando de transmissão. Aguardando o vídeo selecionado.':'Aguardando alguém iniciar uma transmissão.');
 }
@@ -157,6 +165,7 @@ function configure({codec,width,height,fps,audio=false,audioSampleRate=0}){
     if(decoder){decoder.close();decoder=null;}
     closeAudio();
     streamConfig={codec,width,height,fps,audio,audioSampleRate};
+    requireKeyframe=true;resyncOnKeyframe=false;decodeOverruns=0;
     $('enableAudio').hidden=!audio;
     decoder=new VideoDecoder({
       output(frame){
@@ -175,7 +184,11 @@ function configure({codec,width,height,fps,audio=false,audioSampleRate=0}){
           }
         }finally{frame.close();}
       },
-      error(error){feedback('Erro no decodificador: '+error.message);}
+      error(error){
+        resyncOnKeyframe=true;requireKeyframe=true;
+        feedback('Decodificador travou; solicitando novo quadro-chave: '+error.message);
+        requestKeyframe();
+      }
     });
     decoder.configure({codec,codedWidth:width,codedHeight:height,optimizeForLatency:true});
     frames=0;lastUpdate=performance.now();
@@ -186,6 +199,7 @@ function configure({codec,width,height,fps,audio=false,audioSampleRate=0}){
     updateControls('connecting');
     signal('Configuração '+width+'×'+height+' recebida. Aguardando os primeiros quadros de vídeo.');
     ws?.send(JSON.stringify({type:'sync'}));
+    requestKeyframe();
   }catch(e){
     signal('O servidor enviou configuração, mas o decodificador a rejeitou.');
     feedback('Codec de vídeo incompatível: '+e.message);
@@ -242,11 +256,28 @@ function connect(){
       if(isHostOnline)signal('Chegaram dados de vídeo, mas o decodificador não está configurado.');
       return;
     }
+    if(kind===0&&requireKeyframe){requestKeyframe();return;}
+    if(decoder.decodeQueueSize>8){
+      decodeOverruns++;
+      requireKeyframe=true;resyncOnKeyframe=true;
+      requestKeyframe();
+      signal('Player sobrecarregado ('+decodeOverruns+' recuperação/recuperações). Aguardando quadro-chave para sincronizar sem acumular atraso.');
+      return;
+    }
     const view=new DataView(bytes);
     try{
+      if(kind===1&&resyncOnKeyframe&&streamConfig){
+        // Descarta a fila antiga de quadros e reinicia com um keyframe recente.
+        configure(streamConfig);
+        resyncOnKeyframe=false;
+      }
+      if(kind===1)requireKeyframe=false;
+      if(!decoder||decoder.state!=='configured')return;
       decoder.decode(new EncodedVideoChunk({type:kind===1?'key':'delta',timestamp:Number(view.getBigUint64(1)),data:bytes.slice(9)}));
     }catch(err){
-      if(!String(err.message).includes('key frame'))feedback('Reiniciando sincronização de vídeo…');
+      requireKeyframe=true;resyncOnKeyframe=true;
+      requestKeyframe();
+      feedback('Recuperando sincronização do vídeo: '+err.message);
     }
   };
   ws.onclose=event=>{
@@ -265,9 +296,11 @@ $('fullscreen').onclick=()=>{
 diagnosticTimer=setInterval(()=>{
   if(ws?.readyState!==WebSocket.OPEN||!room)return;
   ws.send(JSON.stringify({type:'sync'}));
-  if(isHostOnline&&lastDecodedAt&&Date.now()-lastDecodedAt>4500){
-    signal('Sem novos quadros há mais de 4 segundos. Confira se o navegador transmissor continua enviando FPS.');
-    $('liveBadge').textContent='● SEM QUADROS';
+  if(isHostOnline&&(!lastDecodedAt||Date.now()-lastDecodedAt>3500)){
+    resyncOnKeyframe=true;requireKeyframe=true;
+    requestKeyframe();
+    signal('Vídeo sem atualizar. Pedi um novo quadro-chave para recuperar automaticamente. Se continuar parado, confira o estado da captura na guia transmissora.');
+    $('liveBadge').textContent='● RECONECTANDO VÍDEO';
   }
 },4000);
 window.addEventListener('beforeunload',()=>{

@@ -48,6 +48,7 @@ function startLiveServer({port=PORT,logger=console}={}) {
       if(pathname==='/live/quality.js')return asset(res,'quality.js','application/javascript; charset=utf-8');
       if(pathname==='/live/client.js')return asset(res,'client.js','application/javascript; charset=utf-8');
       if(pathname==='/live/broadcaster.js')return asset(res,'broadcaster.js','application/javascript; charset=utf-8');
+      if(pathname==='/live/capture-worker.js')return asset(res,'capture-worker.js','application/javascript; charset=utf-8');
     }
     if(req.method==='POST' && pathname==='/api/live/room'){
       try {
@@ -148,6 +149,13 @@ function startLiveServer({port=PORT,logger=console}={}) {
         if(m.type==='sync'){
           sendStreamList(room);
           notifySelection(ws,room);
+        }
+        if(m.type==='request-keyframe'){
+          const selected=selectedStream(room,ws);
+          if(selected&&Date.now()-(selected.lastKeyframeRequestAt||0)>800){
+            selected.lastKeyframeRequestAt=Date.now();
+            emit(selected.ws,{type:'keyframe'});
+          }
         }
         if(m.type==='select-stream'&&typeof m.streamId==='string'){
           if(!room.streams.has(m.streamId))return emit(ws,{type:'stream-error',error:'Esta transmissão não está mais disponível.'});

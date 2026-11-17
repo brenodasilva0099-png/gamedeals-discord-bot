@@ -13,6 +13,7 @@ if(fromActivity){
 const video=$('preview');
 let stream=null,ws=null,encoder=null,audioContext=null,audioProcessor=null,audioSource=null,silentNode=null;
 let captureHandle=0,statsTimer=null,transmitting=false,prepared=false,stopping=false;
+let captureWorker=null,captureInitTimer=null,captureWatchdog=null,captureMode='parado',workerLastFrameAt=0,forceKeyframe=false;
 let selected=null,output=null,sourceFps=0,requestedFps=30,lastEncodeAt=0,frameNo=0,framesSent=0,bytesSent=0,dropped=0,statsAt=0;
 const wsUrl=()=> (location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/live/ws';
 const RATE_LIMIT=3*1024*1024;
@@ -48,11 +49,28 @@ function terminateAudio(){
   const a=audioContext;audioContext=null;
   a?.close().catch(()=>{});
 }
+function stopCaptureEngine(){
+  if(captureHandle&&video.cancelVideoFrameCallback){
+    try{video.cancelVideoFrameCallback(captureHandle);}catch{}
+  }
+  captureHandle=0;
+  if(captureInitTimer)clearTimeout(captureInitTimer);
+  captureInitTimer=null;
+  if(captureWatchdog)clearInterval(captureWatchdog);
+  captureWatchdog=null;
+  if(captureWorker){
+    const worker=captureWorker;captureWorker=null;
+    worker.onmessage=null;worker.onerror=null;
+    try{worker.postMessage({type:'stop'});}catch{}
+    worker.terminate();
+  }
+  captureMode='parado';
+  workerLastFrameAt=0;
+}
 function disconnect(reason='Compartilhamento encerrado'){
   if(stopping)return;
   stopping=true;transmitting=false;
-  if(captureHandle&&video.cancelVideoFrameCallback){try{video.cancelVideoFrameCallback(captureHandle);}catch{}}
-  captureHandle=0;
+  stopCaptureEngine();
   if(statsTimer)clearInterval(statsTimer);
   statsTimer=null;
   try{encoder?.close();}catch{}encoder=null;
@@ -168,23 +186,102 @@ async function setupAudio(){
     terminateAudio();feedback('Não foi possível ligar o áudio: '+(error.message||error));return false;
   }
 }
-function videoFrame(now,metadata){
+function encodeCapturedFrame(source,now){
   if(!transmitting||!encoder)return;
-  captureHandle=video.requestVideoFrameCallback(videoFrame);
   if(now-lastEncodeAt<1000/requestedFps-2)return;
-  if(encoder.state!=='configured'||encoder.encodeQueueSize>2||ws?.readyState!==WebSocket.OPEN||ws.bufferedAmount>RATE_LIMIT){dropped++;return;}
+  if(encoder.state!=='configured'||encoder.encodeQueueSize>2||ws?.readyState!==WebSocket.OPEN||ws.bufferedAmount>RATE_LIMIT){
+    dropped++;forceKeyframe=true;return;
+  }
   try{
     lastEncodeAt=now;
-    output.context.drawImage(video,0,0,output.width,output.height);
+    output.context.drawImage(source,0,0,output.width,output.height);
     const frame=new VideoFrame(output.canvas,{timestamp:Math.round(now*1000)});
-    encoder.encode(frame,{keyFrame:frameNo++ % (requestedFps*2)===0});frame.close();
-  }catch(error){feedback('Falha de captura: '+(error.message||error));}
+    const keyframe=forceKeyframe||(frameNo++%(requestedFps*2)===0);
+    encoder.encode(frame,{keyFrame:keyframe});
+    forceKeyframe=false;
+    frame.close();
+  }catch(error){
+    dropped++;forceKeyframe=true;
+    feedback('Falha no processamento de vídeo: '+(error.message||error));
+  }
+}
+function videoFrame(now){
+  if(!transmitting||captureMode!=='video')return;
+  captureHandle=video.requestVideoFrameCallback(videoFrame);
+  encodeCapturedFrame(video,now);
+}
+function previewCapture(){
+  if(!transmitting)return;
+  stopCaptureEngine();
+  captureMode='video';
+  if(video.requestVideoFrameCallback){
+    captureHandle=video.requestVideoFrameCallback(videoFrame);
+    feedback('Captura iniciada pelo vídeo da prévia. Se congelar ao minimizar o navegador, use Chrome ou Edge atualizado para ativar o modo independente.');
+  }else{
+    feedback('Captura por quadros indisponível neste navegador.');
+  }
+}
+function startCaptureEngine(){
+  const source=stream?.getVideoTracks()[0];
+  if(!source||typeof Worker!=='function'||typeof source.clone!=='function'){
+    previewCapture();return;
+  }
+  let clone=null;
+  try{
+    clone=source.clone();
+    const worker=new Worker('/live/capture-worker.js?v=20261117a');
+    captureWorker=worker;
+    captureMode='iniciando-worker';
+    worker.onmessage=({data})=>{
+      if(captureWorker!==worker)return;
+      if(data?.type==='ready'){
+        if(captureInitTimer)clearTimeout(captureInitTimer);
+        captureInitTimer=null;
+        captureMode='worker';
+        workerLastFrameAt=Date.now();
+        feedback('Captura independente ativa. Pode alternar de janela sem depender da prévia do Opera.');
+        captureWatchdog=setInterval(()=>{
+          if(!transmitting||captureWorker!==worker)return;
+          if(Date.now()-workerLastFrameAt>8000&&source.readyState==='live'){
+            feedback('A fonte de vídeo parou de enviar quadros. Tentando recuperar captura…');
+            previewCapture();
+          }
+        },3000);
+      }
+      if(data?.type==='frame'){
+        try{
+          workerLastFrameAt=Date.now();
+          encodeCapturedFrame(data.frame,performance.now());
+        }finally{
+          data.frame?.close();
+          if(captureWorker===worker)worker.postMessage({type:'ack'});
+        }
+      }
+      if(data?.type==='error'){
+        console.warn('[GameDeals Live] Worker indisponível:',data.message);
+        previewCapture();
+      }
+    };
+    worker.onerror=error=>{
+      console.warn('[GameDeals Live] Erro do worker:',error.message||error);
+      if(captureWorker===worker)previewCapture();
+    };
+    captureInitTimer=setTimeout(()=>{
+      if(captureWorker===worker&&captureMode==='iniciando-worker')previewCapture();
+    },3500);
+    worker.postMessage({type:'start',track:clone,fps:requestedFps},[clone]);
+    clone=null;
+  }catch(error){
+    console.info('[GameDeals Live] Captura por worker não suportada:',error?.message||error);
+    clone?.stop();
+    previewCapture();
+  }
 }
 function monitor(){
   const now=performance.now(),delta=Math.max(0.1,(now-statsAt)/1000);
   const fps=framesSent/delta,mbps=bytesSent*8/delta/1000000;
   framesSent=0;bytesSent=0;statsAt=now;
-  $('stats').textContent=output.width+'×'+output.height+' · '+fps.toFixed(1)+' FPS efetivamente enviados (meta '+requestedFps+') · '+mbps.toFixed(1)+' Mb/s · '+dropped+' quadros ignorados';
+  $('stats').textContent=output.width+'×'+output.height+' · '+fps.toFixed(1)+' FPS efetivamente enviados (meta '+requestedFps+') · '+mbps.toFixed(1)+' Mb/s · '+dropped+' quadros ignorados · captura: '+captureMode;
   dropped=0;
 }
 async function begin(){
@@ -242,7 +339,7 @@ async function begin(){
     output.canvas=canvas;output.context=canvas.getContext('2d',{alpha:false,desynchronized:true});
     encoder=new VideoEncoder({
       output(chunk){
-        if(!transmitting||!ws||ws.readyState!==WebSocket.OPEN||ws.bufferedAmount>RATE_LIMIT||chunk.byteLength>1024*1024){dropped++;return;}
+        if(!transmitting||!ws||ws.readyState!==WebSocket.OPEN||ws.bufferedAmount>RATE_LIMIT||chunk.byteLength>1024*1024){dropped++;forceKeyframe=true;return;}
         const packet=new Uint8Array(9+chunk.byteLength);
         const header=new DataView(packet.buffer);header.setUint8(0,chunk.type==='key'?1:0);
         header.setBigUint64(1,BigInt(chunk.timestamp));chunk.copyTo(packet.subarray(9));
@@ -251,8 +348,8 @@ async function begin(){
       error(error){feedback('Falha no codificador: '+error.message);disconnect('Codificador interrompido');}
     });
     encoder.configure(config);
-    transmitting=true;framesSent=0;bytesSent=0;dropped=0;frameNo=0;lastEncodeAt=0;statsAt=performance.now();
-    captureHandle=video.requestVideoFrameCallback(videoFrame);
+    transmitting=true;framesSent=0;bytesSent=0;dropped=0;frameNo=0;lastEncodeAt=0;forceKeyframe=true;statsAt=performance.now();
+    startCaptureEngine();
     statsTimer=setInterval(monitor,1500);
     $('network').textContent='● AO VIVO';setActions();
     describeRelay();
@@ -261,7 +358,7 @@ async function begin(){
       if(typeof data!=='string')return;
       try{
         const msg=JSON.parse(data);
-        if(msg.type==='keyframe')frameNo=0;
+        if(msg.type==='keyframe'){frameNo=0;forceKeyframe=true;}
         if(msg.type==='viewers'){viewersConnected=Number(msg.count)||0;describeRelay();}
         if(msg.type==='relay-stats'){
           relayFrames=Number(msg.frames)||0;relayLastFrameAt=Number(msg.lastFrameAt)||0;
@@ -275,6 +372,11 @@ async function begin(){
 $('streamName').addEventListener('change',()=>{
   const label=String($('streamName').value||'').trim().slice(0,48);
   if(label&&ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'label',label}));
+});
+document.addEventListener('visibilitychange',()=>{
+  if(transmitting&&document.hidden&&captureMode==='video'){
+    $('relayStatus').textContent='O navegador pode limitar a captura quando esta guia fica em segundo plano. Mantenha-a aberta ou use um navegador com captura independente.';
+  }
 });
 $('selectSource').onclick=selectSource;
 $('start').onclick=begin;
