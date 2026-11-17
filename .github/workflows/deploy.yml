@@ -8,6 +8,8 @@ on:
       - 'db.js'
       - 'store.js'
       - 'cheapshark.js'
+      - 'deal-engine.js'
+      - 'test/deal-engine.test.js'
       - 'media.js'
       - 'squarecloud.app'
       - 'package.json'
@@ -61,7 +63,7 @@ jobs:
         run: |
           zip -q -r project.zip \
             squarecloud.app package.json \
-            index.js db.js store.js cheapshark.js media.js \
+            index.js db.js store.js cheapshark.js media.js deal-engine.js \
             live scripts
           unzip -l project.zip
           if unzip -Z1 project.zip | grep -E '(^|/)(data|node_modules|\.env)(/|$)'; then
