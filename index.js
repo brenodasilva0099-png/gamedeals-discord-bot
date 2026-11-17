@@ -436,12 +436,16 @@ async function onButton(i) {
      const status=states.length?states.map(s=>`${s.source==='steam'?'Steam':s.source==='epic'?'Epic':'Outras lojas (CheapShark)'}: ${s.last_error?'⚠️ '+short(s.last_error,90):'✅ OK'} • ${s.item_count} itens • <t:${Math.floor(s.checked_at/1000)}:R>`).join('\n'):'Coleta ainda não iniciada.';
     return interactionReply(i,{embeds:[intro('📡 Estado do monitor',`${status}\n\nVerificações gerais a cada **${POLL_MS/60000} minutos**, com até **${WISHLIST_CHECK_LIMIT}** jogos acompanhados revisados por ciclo. Os horários refletem a coleta, não necessariamente a atualização da loja.\n\n📬 **Fila:** ${counts.pending||0} pendentes · ${counts.delivered||0} entregues · ${counts.failed||0} com falhas.`)]});
   }
-  if(id==='gd:wishlist') {
+  if(id==='gd:wishlist'){
     const list=dbApi.watchList(db,i.user.id);
-    const e=intro('❤️ Meus jogos acompanhados',list.length?list.map(o=>`**${short(o.title,60)}** — ${stores.formatMoney(o.price_cents,o.currency)}${o.target_cents===null?'':` • Alerta: ${stores.formatMoney(o.target_cents,o.currency)}`}`).join('\n'):'Sua lista está vazia. Clique em **Pesquisar** e depois em **Acompanhar**.');
+    const gameWatches=dbApi.watchGameList(db,i.user.id);
+    const individual=list.length?'**Ofertas individuais**\n'+list.map(o=>'**'+short(o.title,58)+'** — '+stores.formatMoney(o.price_cents,o.currency)+(o.target_cents===null?'':' • Meta: '+stores.formatMoney(o.target_cents,o.currency))).join('\n'):'';
+    const games=gameWatches.length?'**Jogos em várias lojas**\n'+gameWatches.map(g=>'**'+short(g.title,58)+'** ('+g.currency+')'+(g.max_cents===null?' • Sem meta':' • Meta: '+stores.formatMoney(g.max_cents,g.currency))).join('\n'):'';
+    const description=[individual,games].filter(Boolean).join('\n\n')||'Sua lista está vazia. Pesquise um jogo e use **Acompanhar** ou **Seguir em lojas**.';
     const components=[];
-    if(list.length) components.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('gd:unwatch:select').setPlaceholder('Remover jogo da lista').addOptions(list.slice(0,25).map(o=>({label:short(o.title,90),value:o.offer_key})))));
-    return interactionReply(i,{embeds:[e],components});
+    if(list.length)components.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('gd:unwatch:select').setPlaceholder('Remover oferta acompanhada').addOptions(list.slice(0,25).map(o=>({label:short(o.title,90),value:o.offer_key})))));
+    if(gameWatches.length)components.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('gd:unwatchgame:select').setPlaceholder('Remover acompanhamento multiloja').addOptions(gameWatches.map(g=>({label:short(g.title+' ('+g.currency+')',95),value:g.watch_id})))));
+    return interactionReply(i,{embeds:[intro('❤️ Meus jogos acompanhados',short(description,3900))],components});
   }
   if(id==='gd:history') {
     const list=db.prepare('SELECT offer_key,title FROM offers ORDER BY changed_at DESC LIMIT 25').all();
@@ -522,6 +526,10 @@ async function onSelect(i) {
     return interactionReply(i,{content:`Desconto mínimo alterado para **${val}%**.`});
   }
   if(id==='gd:unwatch:select') {db.prepare('DELETE FROM watchlist WHERE user_id=? AND offer_key=?').run(i.user.id,val);return interactionReply(i,{content:'Jogo removido da sua lista de desejos.'});}
+  if(id==='gd:unwatchgame:select'){
+    db.prepare('DELETE FROM game_watches WHERE watch_id=? AND user_id=?').run(val,i.user.id);
+    return interactionReply(i,{content:'Jogo removido do acompanhamento multiloja.'});
+  }
 }
 
 async function onModal(i) {
