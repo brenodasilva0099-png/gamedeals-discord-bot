@@ -182,3 +182,33 @@ A versão atual só mostra **AO VIVO** na Activity depois de receber e decodific
 No transmissor, **espectadores conectados = 0** significa que não há uma Activity assistindo à mesma sessão; saia da Activity, encerre a guia de transmissão antiga, inicie novamente a Activity e use o botão **Abrir no navegador** para gerar link novo. **Quadros recebidos pelo servidor = 0** com FPS locais positivos indica problemas entre codificador/rede e relay. Se o relay recebe quadros mas a Activity não exibe vídeo, verifique erro do codec/decodificador no rodapé da Activity. A Activity envia `sync` periodicamente para se recuperar de mensagens de estado perdidas.
 
 O protocolo usa mensagens `config-ack`, `config-error`, `relay-stats`, `sync` e `viewers`; não retorna tokens em diagnóstico e não grava frames.
+
+## GameDeals Bot — evolução de v0.6 até v0.9
+
+### v0.6 · Alertas confiáveis
+- Corrigida a detecção de promoções temporariamente grátis da Epic Games. Jogos permanentemente gratuitos continuam fora dos anúncios de ofertas temporárias.
+- Fila de notificações persistente no SQLite, com deduplicação por evento, retentativas automáticas com intervalo crescente, e descarte de promoções expiradas ou cujo preço mudou.
+- A primeira coleta não dispara em massa ofertas anteriores.
+
+### v0.7 · Busca e comparação
+- Busca unificada no painel, com ordenação por relevância, maior desconto e menor preço, preservando o agrupamento por moeda.
+- Filtros por Steam / lojas parceiras, moeda BRL / USD e somente promoções.
+- Comparação por título normalizado e tipo de edição, ignorando promoções vencidas; nenhuma conversão fictícia entre USD e BRL.
+
+### v0.8 · Acompanhamento multiloja
+- Na ficha de cada jogo há Seguir em lojas e Alerta multiloja.
+- Metas de preço individuais por título, edição e moeda; alertas enviados por DM quando as fontes consultadas encontram ofertas que atendem à meta.
+- Meus desejos reúne acompanhamento individual e multiloja com remoção separada.
+- Jogos Steam acompanhados entram no rodízio de verificações limitado por ciclo.
+
+### v0.9 · Monitoramento e administração
+- Administração: Relatório de catálogo, acompanhamentos, fila de alertas e saúde das fontes; botão Reenviar falhas.
+- Persistência do último horário de coleta bem-sucedida, independente do último erro.
+- Até três páginas de destaques de revendedores disponíveis no CheapShark, uma vez por hora, com cache e limite de requisições; sem anúncio em massa na primeira expansão.
+- Limpeza periódica somente de registros de fila entregues ou descartados com mais de 90 dias, preservando o histórico de ofertas, alertas e o banco.
+- Testes automatizados para migrações, promoções gratuitas, filtros, acompanhamento multiloja e fila de avisos.
+
+### Limites que permanecem
+A Steam é monitorada por ofertas em destaque e por produtos acompanhados; isso não cobre o catálogo integral. A Epic é acompanhada para resgates temporariamente grátis; produtos pagos não são monitorados de forma completa. Revendedores como GOG, Fanatical e Green Man Gaming aparecem quando retornados por uma fonte autorizada (CheapShark), com preços geralmente em USD e disponibilidade regional variável. Nuuvem e Instant Gaming dependem de acesso a uma fonte/API autorizada: por isso, permanecem pendentes, sem preços fabricados. O histórico de preços começa com a coleta do próprio GameDeals; não representa o menor preço absoluto da loja. Os backups são locais à Square Cloud, não constituem backup externo para recuperação de desastre.
+
+O bot e a GameDeals-Live continuam em aplicativos separados. O fluxo de deploy do bot inclui deal-engine.js, mas nunca empacota o diretório de dados, credenciais ou arquivos .env.
