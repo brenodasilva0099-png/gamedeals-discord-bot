@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: gamedeals-live-web-production
+  group: gamedeals-live-web-production-v2
   cancel-in-progress: true
 
 jobs:
