@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const engine=require('./deal-engine');
 const { DatabaseSync, backup } = require('node:sqlite');
 
 function openDb(dir = process.env.DATA_DIR || path.join(process.cwd(), 'data')) {
@@ -37,6 +38,14 @@ function openDb(dir = process.env.DATA_DIR || path.join(process.cwd(), 'data')) 
     price_cents INTEGER NOT NULL,changed_at INTEGER NOT NULL,delivered_at INTEGER NOT NULL,
     PRIMARY KEY(user_id,offer_key,watch_id,changed_at)
   );`);
+  const offerColumns=db.prepare('PRAGMA table_info(offers)').all().map(col=>col.name);
+  if(!offerColumns.includes('game_key')){
+    db.exec('ALTER TABLE offers ADD COLUMN game_key TEXT');
+    const update=db.prepare('UPDATE offers SET game_key=? WHERE offer_key=?');
+    for(const o of db.prepare('SELECT offer_key,title,kind FROM offers').all())
+      update.run(engine.gameKey(o),o.offer_key);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_offers_game ON offers(game_key,currency)');
   const columns = db.prepare('PRAGMA table_info(guilds)').all().map(col => col.name);
   if (!columns.includes('max_price_cents')) db.exec('ALTER TABLE guilds ADD COLUMN max_price_cents INTEGER');
   return db;
@@ -45,9 +54,9 @@ function openDb(dir = process.env.DATA_DIR || path.join(process.cwd(), 'data')) 
 function upsertOffer(db, o) {
   const previous = db.prepare('SELECT price_cents, currency, discount, original_cents FROM offers WHERE offer_key=?').get(o.key);
   const now = Date.now();
-  db.prepare(`INSERT INTO offers(offer_key,title,source,kind,url,image,currency,original_cents,price_cents,discount,expires_at,seen_at,changed_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(offer_key) DO UPDATE SET title=excluded.title,url=excluded.url,image=COALESCE(excluded.image,offers.image),currency=excluded.currency,original_cents=excluded.original_cents,price_cents=excluded.price_cents,discount=excluded.discount,expires_at=excluded.expires_at,seen_at=excluded.seen_at,changed_at=CASE WHEN offers.price_cents != excluded.price_cents OR offers.currency != excluded.currency OR offers.discount != excluded.discount THEN excluded.changed_at ELSE offers.changed_at END`).run(o.key,o.title,o.source,o.kind,o.url,o.image,o.currency,o.originalCents,o.priceCents,o.discount,o.expiresAt,now,now);
+  db.prepare(`INSERT INTO offers(offer_key,title,source,kind,url,image,currency,original_cents,price_cents,discount,expires_at,seen_at,changed_at,game_key)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(offer_key) DO UPDATE SET title=excluded.title,url=excluded.url,game_key=excluded.game_key,image=COALESCE(excluded.image,offers.image),currency=excluded.currency,original_cents=excluded.original_cents,price_cents=excluded.price_cents,discount=excluded.discount,expires_at=excluded.expires_at,seen_at=excluded.seen_at,changed_at=CASE WHEN offers.price_cents != excluded.price_cents OR offers.currency != excluded.currency OR offers.discount != excluded.discount THEN excluded.changed_at ELSE offers.changed_at END`).run(o.key,o.title,o.source,o.kind,o.url,o.image,o.currency,o.originalCents,o.priceCents,o.discount,o.expiresAt,now,now,engine.gameKey(o));
   const changed = !previous || previous.price_cents !== o.priceCents || previous.currency !== o.currency || previous.discount !== o.discount;
   if (changed) db.prepare('INSERT INTO price_history(offer_key,price_cents,currency,recorded_at) VALUES(?,?,?,?)').run(o.key,o.priceCents,o.currency,now);
   return changed;
