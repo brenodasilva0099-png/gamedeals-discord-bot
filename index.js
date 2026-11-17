@@ -303,7 +303,7 @@ function offerView(o, userId) {
     btn(`gd:watch:${o.offer_key}`,isWatched?'Parar de seguir':'Acompanhar',isWatched?ButtonStyle.Danger:ButtonStyle.Success,isWatched?'🗑️':'❤️'),
     btn(`gd:target:${o.offer_key}`,'Definir alerta',ButtonStyle.Secondary,'🔔'),
     btn(`gd:history:${o.offer_key}`,'Histórico',ButtonStyle.Secondary,'📈'),
-    btn(`gd:compare:${o.offer_key}`,'Comparar lojas',ButtonStyle.Secondary,'🏬')), shopLink(o)]};
+    btn(`gd:compare:${o.offer_key}`,'Comparar lojas',ButtonStyle.Secondary,'🏬'),btn(`gd:gamewatch:${o.offer_key}`,'Seguir em lojas',ButtonStyle.Secondary,'🌐'),btn(`gd:gametarget:${o.offer_key}`,'Alerta multiloja',ButtonStyle.Secondary,'🔔')), shopLink(o)]};
 }
 function historyView(key) {
   const o=dbApi.getOffer(db,key);
@@ -366,6 +366,23 @@ async function onButton(i) {
     const key=id.slice('gd:target:'.length);
     if(!dbApi.getOffer(db,key)) return interactionReply(i,{content:'Oferta não encontrada.'});
     return i.showModal(modal(`gd:targetsave:${key}`,'Alerta personalizado',`Preço máximo em ${dbApi.getOffer(db,key).currency}`,'49,90 ou 9.99'));
+  }
+  if(id.startsWith('gd:gamewatch:')){
+    const o=dbApi.getOffer(db,id.slice('gd:gamewatch:'.length));
+    if(!o||!engine.gameKey(o))return interactionReply(i,{content:'Jogo não encontrado.'});
+    const key=engine.gameKey(o);
+    const exists=db.prepare('SELECT watch_id FROM game_watches WHERE user_id=? AND game_key=? AND currency=?').get(i.user.id,key,o.currency);
+    if(exists){
+      db.prepare('DELETE FROM game_watches WHERE user_id=? AND watch_id=?').run(i.user.id,exists.watch_id);
+      return interactionReply(i,{content:'Jogo removido da lista multiloja.'});
+    }
+    dbApi.upsertGameWatch(db,{userId:i.user.id,key,title:o.title,currency:o.currency});
+    return interactionReply(i,{content:'🌐 Agora você acompanha o jogo '+short(o.title,100)+' em lojas com o mesmo título e edição, sempre na moeda '+o.currency+'. Use Alerta multiloja para definir seu preço.'});
+  }
+  if(id.startsWith('gd:gametarget:')){
+    const o=dbApi.getOffer(db,id.slice('gd:gametarget:'.length));
+    if(!o)return interactionReply(i,{content:'Jogo não encontrado.'});
+    return i.showModal(modal('gd:gametargetsave:'+o.offer_key,'Alerta multiloja','Preço máximo em '+o.currency,'Ex.: 49,90'));
   }
   if (id==='gd:settings') {
     if(!canAdmin(i)) return interactionReply(i,{content:'Somente membros com Gerenciar Servidor podem alterar estas configurações.'});
@@ -514,6 +531,19 @@ async function onModal(i) {
     try {return i.editReply(searchResultsView(value,await findAllGames(value)));}
     catch(err){return i.editReply(`Não consegui consultar a Steam agora (${short(err.message,120)}). Tente novamente mais tarde.`);}
   }
+  if(id.startsWith('gd:gametargetsave:')){
+    const offer=dbApi.getOffer(db,id.slice('gd:gametargetsave:'.length));
+    if(!offer||!engine.gameKey(offer))return interactionReply(i,{content:'Jogo não encontrado.'});
+    const normalized=String(value).replace(/\s/g,'').replace(/^(R\$|US\$|\$)/i,'').replace(',','.');
+    if(!/^[0-9]+(?:\.[0-9]{1,2})?$/.test(normalized))return interactionReply(i,{content:'Valor inválido. Exemplo: 49,90'});
+    const price=Math.round(Number(normalized)*100);
+    if(!Number.isSafeInteger(price)||price<0||price>10000000)return interactionReply(i,{content:'Preço-alvo fora do limite.'});
+    dbApi.upsertGameWatch(db,{userId:i.user.id,key:engine.gameKey(offer),title:offer.title,currency:offer.currency,maxCents:price});
+    if(engine.validOffer(offer)&&offer.price_cents<=price){
+      dbApi.enqueueDelivery(db,{id:engine.queueId('dm',i.user.id,offer.offer_key,offer.changed_at),type:'dm',target:i.user.id,offerKey:offer.offer_key,priceCents:offer.price_cents,createdAt:Date.now()});
+    }
+    return interactionReply(i,{content:'🔔 Alerta multiloja de '+short(offer.title,100)+' até '+stores.formatMoney(price,offer.currency)+' configurado. O GameDeals comparará a mesma edição e moeda sempre que uma fonte consultar o jogo.'});
+  }
   if(id.startsWith('gd:targetsave:')) {
     const key=id.slice('gd:targetsave:'.length);const offer=dbApi.getOffer(db,key);
     if(!offer)return interactionReply(i,{content:'Oferta não encontrada.'});
@@ -548,9 +578,11 @@ function queueNotifications(o){
     dbApi.enqueueDelivery(db,{id:engine.queueId('guild',g.guild_id,o.key,changedAt),type:'guild',target:g.guild_id,offerKey:o.key,priceCents:o.priceCents,createdAt:now});
     count++;
   }
-  for(const w of db.prepare('SELECT user_id FROM watchlist WHERE offer_key=? AND target_cents IS NOT NULL AND target_cents>=?').all(o.key,o.priceCents)){
-    dbApi.enqueueDelivery(db,{id:engine.queueId('dm',w.user_id,o.key,changedAt),type:'dm',target:w.user_id,offerKey:o.key,priceCents:o.priceCents,createdAt:now});
-    count++;
+  const targets=new Set(db.prepare('SELECT user_id FROM watchlist WHERE offer_key=? AND target_cents IS NOT NULL AND target_cents>=?').all(o.key,o.priceCents).map(w=>w.user_id));
+  const game=engine.gameKey(o);
+  if(game)for(const w of db.prepare('SELECT user_id FROM game_watches WHERE game_key=? AND currency=? AND max_cents IS NOT NULL AND max_cents>=?').all(game,o.currency,o.priceCents))targets.add(w.user_id);
+  for(const userId of targets){
+    dbApi.enqueueDelivery(db,{id:engine.queueId('dm',userId,o.key,changedAt),type:'dm',target:userId,offerKey:o.key,priceCents:o.priceCents,createdAt:now});count++;
   }
   return count;
 }
@@ -573,7 +605,8 @@ async function deliverQueue(){
         db.prepare('INSERT OR IGNORE INTO notifications(guild_id,offer_key,price_cents,delivered_at) VALUES(?,?,?,?)').run(g.guild_id,o.offer_key,o.price_cents,Date.now());
       }else{
         const w=db.prepare('SELECT 1 FROM watchlist WHERE user_id=? AND offer_key=? AND target_cents>=?').get(task.target_id,o.offer_key,o.price_cents);
-        if(!w){dbApi.discardDelivery(db,task.id,'Alerta removido');continue;}
+        const game=o.game_key&&db.prepare('SELECT watch_id FROM game_watches WHERE user_id=? AND game_key=? AND currency=? AND max_cents>=?').get(task.target_id,o.game_key,o.currency,o.price_cents);
+        if(!w&&!game){dbApi.discardDelivery(db,task.id,'Alerta removido');continue;}
         const user=await client.users.fetch(task.target_id);
         await user.send({content:'🔔 Seu alerta de preço foi atingido!',embeds:[offerEmbed(o)],components:[shopLink(o)]});
         db.prepare('INSERT OR IGNORE INTO dm_notifications(user_id,offer_key,price_cents,delivered_at) VALUES(?,?,?,?)').run(task.target_id,o.offer_key,o.price_cents,Date.now());
@@ -589,7 +622,7 @@ async function deliverQueue(){
 }
 
 async function refreshWatchlist() {
-  const items=db.prepare("SELECT DISTINCT w.offer_key FROM watchlist w JOIN offers o ON o.offer_key=w.offer_key WHERE o.source='steam' AND o.kind='app' ORDER BY w.offer_key").all();
+  const items=db.prepare("SELECT DISTINCT o.offer_key FROM offers o WHERE o.source='steam' AND o.kind='app' AND (EXISTS(SELECT 1 FROM watchlist w WHERE w.offer_key=o.offer_key) OR EXISTS(SELECT 1 FROM game_watches g WHERE g.game_key=o.game_key AND g.currency=o.currency AND g.max_cents IS NOT NULL)) ORDER BY o.offer_key").all();
   if(!items.length)return;
   const cursor=Number(db.prepare("SELECT value FROM meta WHERE key='watch_scan_cursor'").get()?.value)||0;
   const batch=Array.from({length:Math.min(WISHLIST_CHECK_LIMIT,items.length)},(_,i)=>items[(cursor+i)%items.length]);
