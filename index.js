@@ -48,7 +48,7 @@ function menu() {
   const embed = new EmbedBuilder().setColor(0x274667).setTitle('🎮 GameDeals • Central de jogos')
     .setDescription('**Bem-vindo à sua central de promoções!**\n\nPesquise jogos, consulte descontos, acompanhe preços e veja os jogos grátis. Clique em uma opção abaixo. Sua navegação é privada: outras pessoas não verão suas pesquisas.\n\n🔄 Dados obtidos de fontes externas e atualizados periodicamente. Preços e disponibilidade devem ser confirmados na loja antes da compra.')
     .addFields({name:'📢 Notificações automáticas',value:'São enviadas no canal **#promocoes-de-jogos**.',inline:false})
-    .setFooter({text:'GameDeals • Menu principal • v0.5.1 • Navegação por botões'});
+    .setFooter({text:'GameDeals • Menu principal • v0.9 • Navegação por botões'});
   return { embeds:[embed], components:[
     ...rows(btn('gd:offers','Ofertas',ButtonStyle.Primary,'🏷️'),btn('gd:search','Pesquisar',ButtonStyle.Primary,'🔎'),btn('gd:free','Jogos grátis',ButtonStyle.Success,'🎁'),btn('gd:wishlist','Meus desejos',ButtonStyle.Secondary,'❤️'),btn('gd:history','Histórico',ButtonStyle.Secondary,'📈')),
     ...rows(btn('gd:partners','Outras lojas',ButtonStyle.Primary,'🏬'),btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓')),
@@ -387,7 +387,26 @@ async function onButton(i) {
   if (id==='gd:settings') {
     if(!canAdmin(i)) return interactionReply(i,{content:'Somente membros com Gerenciar Servidor podem alterar estas configurações.'});
     const g=dbApi.getGuild(db,i.guildId);
-    return interactionReply(i,{embeds:[intro('⚙️ Administração',`Notificações: **${g?.enabled?'Ligadas':'Desligadas'}**\nDesconto mínimo: **${g?.min_discount||0}%**\nLimite de preço: **${g?.max_price_cents===null?'Sem limite':stores.formatMoney(g.max_price_cents,'BRL')}** *(limite de preço em R$ não se aplica aos valores USD; nesse caso, anúncios USD ficam ocultos quando há limite)*\n\nEscolha uma opção abaixo.`)],components:rows(btn('gd:toggle','Ligar/desligar avisos',ButtonStyle.Primary,'🔔'),btn('gd:discount','Alterar desconto mínimo',ButtonStyle.Secondary,'🏷️'),btn('gd:sample','Publicar 3 ofertas',ButtonStyle.Secondary,'📢'),btn('gd:pricecap','Limite de preço',ButtonStyle.Secondary,'💰'),btn('gd:refresh','Atualizar agora',ButtonStyle.Secondary,'🔄'))});
+    return interactionReply(i,{embeds:[intro('⚙️ Administração',`Notificações: **${g?.enabled?'Ligadas':'Desligadas'}**\nDesconto mínimo: **${g?.min_discount||0}%**\nLimite de preço: **${g?.max_price_cents===null?'Sem limite':stores.formatMoney(g.max_price_cents,'BRL')}** *(limite de preço em R$ não se aplica aos valores USD; nesse caso, anúncios USD ficam ocultos quando há limite)*\n\nEscolha uma opção abaixo.`)],components:rows(btn('gd:toggle','Ligar/desligar avisos',ButtonStyle.Primary,'🔔'),btn('gd:discount','Alterar desconto mínimo',ButtonStyle.Secondary,'🏷️'),btn('gd:sample','Publicar 3 ofertas',ButtonStyle.Secondary,'📢'),btn('gd:pricecap','Limite de preço',ButtonStyle.Secondary,'💰'),btn('gd:refresh','Atualizar agora',ButtonStyle.Secondary,'🔄'),btn('gd:report','Relatório',ButtonStyle.Secondary,'📊'),btn('gd:retryfailed','Reenviar falhas',ButtonStyle.Secondary,'📨'))});
+  }
+  if(id==='gd:report'){
+    if(!canAdmin(i))return interactionReply(i,{content:'Relatório disponível somente para administradores do servidor.'});
+    const summary=dbApi.getGuildStats(db);
+    const queue=Object.fromEntries(summary.queue.map(v=>[v.status,v.n]));
+    const recent=db.prepare('SELECT source,COUNT(*) n FROM offers WHERE seen_at>? GROUP BY source ORDER BY n DESC LIMIT 12').all(Date.now()-2*86400000);
+    const sources=summary.sources.map(v=>v.source+': '+(v.last_error?'⚠️ '+short(v.last_error,95):'✅ OK')+' · '+v.item_count+' itens'+(v.last_success_at?' · sucesso <t:'+Math.floor(v.last_success_at/1000)+':R>':' · sem sucesso confirmado')).join('\n');
+    const catalog=recent.map(v=>shopName(v.source)+': '+v.n).join(' · ')||'Nenhuma coleta recente';
+    return interactionReply(i,{embeds:[intro('📊 GameDeals • Relatório',
+      '**Catálogo:** '+summary.offers+' produtos armazenados; '+summary.pricePoints+' registros de preço.\n'+
+      '**Acompanhamentos:** '+summary.watchers+' individuais; '+summary.gameWatches+' multiloja.\n'+
+      '**Fila de alertas:** '+(queue.pending||0)+' pendentes; '+(queue.delivered||0)+' entregues; '+(queue.failed||0)+' com falha.\n'+
+      '**Itens vistos nos últimos 2 dias:** '+catalog+'\n\n**Fontes:**\n'+(sources||'Coleta ainda não iniciada.')+
+      '\n\n*Valores correspondem ao banco local deste bot; não são estatísticas globais das lojas.*')]}]});
+  }
+  if(id==='gd:retryfailed'){
+    if(!canAdmin(i))return interactionReply(i,{content:'Somente administradores podem reenviar notificações.'});
+    const n=dbApi.retryFailedDeliveries(db);
+    return interactionReply(i,{content:n?'📨 '+n+' aviso(s) retornaram à fila. A próxima varredura tentará entregá-los novamente.':'Não há notificações com falha para reenviar.'});
   }
   if(id==='gd:toggle' && canAdmin(i)) {
     const g=dbApi.getGuild(db,i.guildId); db.prepare('UPDATE guilds SET enabled=? WHERE guild_id=?').run(g?.enabled?0:1,i.guildId);
@@ -670,28 +689,27 @@ async function poll() {
       }catch(err){dbApi.setSource(db,source,0,err.message);log('Falha na fonte',source,err.message);}
       await new Promise(resolve=>setTimeout(resolve,500));
     }
-    // Uma única página pequena a cada 4 horas: sem varrer o catálogo completo.
+    // Fonte internacional autorizada via CheapShark, com paginacao moderada por hora.
     const last=db.prepare("SELECT checked_at,last_error FROM sources WHERE source='cheapshark'").get();
     const age=Date.now()-(last?.checked_at||0);
-    if(age>=(last?.last_error?60:240)*60*1000) {
+    if(age>=(last?.last_error?30:60)*60*1000) {
       try {
-        const offers=await shark.featured();let changedCount=0;let sent=0;
-        for(const o of offers) {
+        const offers=await shark.featured();let changedCount=0;let queued=0;
+        const expandedSeeded=Boolean(db.prepare("SELECT 1 FROM meta WHERE key='cs_extended_seeded'").get());
+        for(const o of offers){
           if(dbApi.upsertOffer(db,o)){
             changedCount++;
-            if(initializedSources.has('cheapshark')) {
-              if(sent<6){queueNotifications(o);sent++;}
-              // Alertas multiloja tratados pela lista de jogos da v0.8.
-            }
+            if(initializedSources.has('cheapshark')&&expandedSeeded)queued+=queueNotifications(o);
           }
         }
         dbApi.setSource(db,'cheapshark',offers.length);
+        if(!expandedSeeded)db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('cs_extended_seeded','yes')").run();
         if(!initializedSources.has('cheapshark')) {
           db.prepare("INSERT INTO meta(key,value) VALUES('source_init:cheapshark','yes') ON CONFLICT(key) DO UPDATE SET value='yes'").run();
           initializedSources.add('cheapshark');
           log('CheapShark iniciado sem publicar em massa os descontos anteriores.');
         }
-        log(`CheapShark: ${offers.length} produtos na amostra, ${changedCount} novos preços, ${sent} avisos.`);
+        log(`CheapShark: ${offers.length} produtos na amostra, ${changedCount} novos preços, ${queued} destinos adicionados à fila.`);
       } catch(e){dbApi.setSource(db,'cheapshark',0,e.message);log('Falha no CheapShark',e.message);}
     }
     await refreshWatchlist();
@@ -717,10 +735,11 @@ client.once('ready',async()=>{
     catch(err){ log('GameDeals Live: falha ao registrar comando de entrada:',err.message); }
   }
   for(const guild of client.guilds.cache.values()){try{await ensureGuild(guild);await registerGuildCommand(guild);}catch(e){log('Falha ao instalar painel',guild.name,e.message);}}
+  dbApi.pruneDeliveryHistory(db);
   await poll();
   dbApi.backupDb(db).then(file=>log('Backup local',file)).catch(e=>log('Falha no backup',e.message));
   setInterval(()=>poll().catch(e=>{log('Falha na varredura',e.message);}),POLL_MS);
-  setInterval(()=>dbApi.backupDb(db).then(file=>log('Backup local',file)).catch(e=>log('Falha no backup',e.message)),24*60*60*1000);
+  setInterval(()=>{dbApi.pruneDeliveryHistory(db);dbApi.backupDb(db).then(file=>log('Backup local',file)).catch(e=>log('Falha no backup',e.message));},24*60*60*1000);
 });
 client.on('guildCreate',async guild=>{try{await ensureGuild(guild);await registerGuildCommand(guild);}catch(e){log('Falha ao instalar novo servidor',e.message);}});
 client.on('error',e=>log('Erro Discord',e.message));
