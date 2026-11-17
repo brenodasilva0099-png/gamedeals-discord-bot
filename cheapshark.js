@@ -18,7 +18,7 @@ const AUTHORIZED=Object.freeze({
 });
 const STORE_CACHE_MS=24*60*60*1000;
 const QUERY_CACHE_MS=15*60*1000;
-const BROWSE_CACHE_MS=4*60*60*1000;
+const BROWSE_CACHE_MS=60*60*1000;
 const STORE_PAGE_SIZE=20; // paginas API, 10 telas Discord de 2 ofertas
 const cache=new Map();
 let nextAllowed=0;
@@ -109,7 +109,16 @@ async function browseStore(slug,page=0){
   });
 }
 async function featured(){
-  return cached('featured',BROWSE_CACHE_MS,()=>requestDeals(new URLSearchParams({onSale:'1',pageSize:'35',pageNumber:'0',sortBy:'DealRating'})));
+  return cached('featured',BROWSE_CACHE_MS,async()=>{
+    // Amostra rotativa de ate tres paginas para ampliar cobertura sem scraping.
+    const pages=[];
+    for(let page=0;page<3;page++){
+      const deals=await requestDeals(new URLSearchParams({onSale:'1',pageSize:'35',pageNumber:String(page),sortBy:'DealRating'}));
+      pages.push(...deals);
+      if(deals.length<35)break;
+    }
+    return [...new Map(pages.map(deal=>[deal.key,deal])).values()];
+  });
 }
 async function searchByTitle(title){
   const clean=String(title||'').trim().slice(0,80);
