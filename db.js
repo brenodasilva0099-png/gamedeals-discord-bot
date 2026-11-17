@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { DatabaseSync, backup } = require('node:sqlite');
 
 function openDb(dir = process.env.DATA_DIR || path.join(process.cwd(), 'data')) {
@@ -16,19 +17,38 @@ function openDb(dir = process.env.DATA_DIR || path.join(process.cwd(), 'data')) 
   CREATE TABLE IF NOT EXISTS notifications (guild_id TEXT NOT NULL, offer_key TEXT NOT NULL, price_cents INTEGER NOT NULL, delivered_at INTEGER NOT NULL, PRIMARY KEY(guild_id, offer_key, price_cents));
   CREATE TABLE IF NOT EXISTS dm_notifications (user_id TEXT NOT NULL, offer_key TEXT NOT NULL, price_cents INTEGER NOT NULL, delivered_at INTEGER NOT NULL, PRIMARY KEY(user_id, offer_key, price_cents));
   CREATE TABLE IF NOT EXISTS sources (source TEXT PRIMARY KEY, checked_at INTEGER, last_error TEXT, item_count INTEGER NOT NULL DEFAULT 0);
-  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);`);
+  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+  CREATE TABLE IF NOT EXISTS delivery_queue(
+    id TEXT PRIMARY KEY,
+    target_type TEXT NOT NULL CHECK(target_type IN ('guild','dm')),
+    target_id TEXT NOT NULL,offer_key TEXT NOT NULL,price_cents INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,next_attempt_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'pending',last_error TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_delivery_queue_due ON delivery_queue(status,next_attempt_at);
+  CREATE TABLE IF NOT EXISTS game_watches(
+    watch_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,game_key TEXT NOT NULL,
+    title TEXT NOT NULL,currency TEXT NOT NULL,max_cents INTEGER,
+    created_at INTEGER NOT NULL,UNIQUE(user_id,game_key,currency)
+  );
+  CREATE INDEX IF NOT EXISTS idx_game_watches ON game_watches(game_key,currency);
+  CREATE TABLE IF NOT EXISTS game_dm_notifications(
+    user_id TEXT NOT NULL,offer_key TEXT NOT NULL,watch_id TEXT NOT NULL,
+    price_cents INTEGER NOT NULL,changed_at INTEGER NOT NULL,delivered_at INTEGER NOT NULL,
+    PRIMARY KEY(user_id,offer_key,watch_id,changed_at)
+  );`);
   const columns = db.prepare('PRAGMA table_info(guilds)').all().map(col => col.name);
   if (!columns.includes('max_price_cents')) db.exec('ALTER TABLE guilds ADD COLUMN max_price_cents INTEGER');
   return db;
 }
 
 function upsertOffer(db, o) {
-  const previous = db.prepare('SELECT price_cents, discount, original_cents FROM offers WHERE offer_key=?').get(o.key);
+  const previous = db.prepare('SELECT price_cents, currency, discount, original_cents FROM offers WHERE offer_key=?').get(o.key);
   const now = Date.now();
   db.prepare(`INSERT INTO offers(offer_key,title,source,kind,url,image,currency,original_cents,price_cents,discount,expires_at,seen_at,changed_at)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(offer_key) DO UPDATE SET title=excluded.title,url=excluded.url,image=COALESCE(excluded.image,offers.image),currency=excluded.currency,original_cents=excluded.original_cents,price_cents=excluded.price_cents,discount=excluded.discount,expires_at=excluded.expires_at,seen_at=excluded.seen_at,changed_at=CASE WHEN offers.price_cents != excluded.price_cents THEN excluded.changed_at ELSE offers.changed_at END`).run(o.key,o.title,o.source,o.kind,o.url,o.image,o.currency,o.originalCents,o.priceCents,o.discount,o.expiresAt,now,now);
-  const changed = !previous || previous.price_cents !== o.priceCents;
+    ON CONFLICT(offer_key) DO UPDATE SET title=excluded.title,url=excluded.url,image=COALESCE(excluded.image,offers.image),currency=excluded.currency,original_cents=excluded.original_cents,price_cents=excluded.price_cents,discount=excluded.discount,expires_at=excluded.expires_at,seen_at=excluded.seen_at,changed_at=CASE WHEN offers.price_cents != excluded.price_cents OR offers.currency != excluded.currency OR offers.discount != excluded.discount THEN excluded.changed_at ELSE offers.changed_at END`).run(o.key,o.title,o.source,o.kind,o.url,o.image,o.currency,o.originalCents,o.priceCents,o.discount,o.expiresAt,now,now);
+  const changed = !previous || previous.price_cents !== o.priceCents || previous.currency !== o.currency || previous.discount !== o.discount;
   if (changed) db.prepare('INSERT INTO price_history(offer_key,price_cents,currency,recorded_at) VALUES(?,?,?,?)').run(o.key,o.priceCents,o.currency,now);
   return changed;
 }
@@ -49,4 +69,44 @@ async function backupDb(db, dir=process.env.DATA_DIR || path.join(process.cwd(),
   for(const old of copies.slice(7))fs.rmSync(path.join(folder,old),{force:true});
   return file;
 }
-module.exports={openDb,upsertOffer,getOffer,recentDeals,freeGames,watchList,setSource,getGuild,setGuild,backupDb};
+
+function enqueueDelivery(db,d){
+  db.prepare('INSERT OR IGNORE INTO delivery_queue(id,target_type,target_id,offer_key,price_cents,created_at,next_attempt_at) VALUES(?,?,?,?,?,?,?)')
+    .run(d.id,d.type,d.target,d.offerKey,d.priceCents,d.createdAt,d.createdAt);
+}
+function dueDeliveries(db,limit=20,now=Date.now()){
+  return db.prepare("SELECT * FROM delivery_queue WHERE status='pending' AND next_attempt_at<=? ORDER BY created_at ASC LIMIT ?").all(now,limit);
+}
+function deliveryResult(db,id,ok,message='',now=Date.now(),retryMs=30000){
+  if(ok)db.prepare("UPDATE delivery_queue SET status='delivered',last_error=NULL WHERE id=?").run(id);
+  else db.prepare("UPDATE delivery_queue SET attempts=attempts+1,status=CASE WHEN attempts>=5 THEN 'failed' ELSE 'pending' END,next_attempt_at=?,last_error=? WHERE id=?")
+    .run(now+retryMs,String(message).slice(0,250),id);
+}
+function discardDelivery(db,id,why='expired'){
+  db.prepare("UPDATE delivery_queue SET status='discarded',last_error=? WHERE id=?").run(why,id);
+}
+function queueStats(db){
+  return db.prepare('SELECT status,COUNT(*) n FROM delivery_queue GROUP BY status').all();
+}
+function getGuildStats(db){
+  return {
+    offers:db.prepare('SELECT COUNT(*) n FROM offers').get().n,
+    watchers:db.prepare('SELECT COUNT(*) n FROM watchlist').get().n,
+    gameWatches:db.prepare('SELECT COUNT(*) n FROM game_watches').get().n,
+    pricePoints:db.prepare('SELECT COUNT(*) n FROM price_history').get().n,
+    sources:db.prepare('SELECT source,checked_at,last_error,item_count FROM sources ORDER BY source').all(),
+    queue:queueStats(db)
+  };
+}
+function upsertGameWatch(db,{userId,key,title,currency,maxCents=null}){
+  const prior=db.prepare('SELECT watch_id FROM game_watches WHERE user_id=? AND game_key=? AND currency=?').get(userId,key,currency);
+  const watchId=prior?.watch_id||crypto.randomBytes(12).toString('hex');
+  db.prepare('INSERT INTO game_watches(watch_id,user_id,game_key,title,currency,max_cents,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,game_key,currency) DO UPDATE SET title=excluded.title,max_cents=COALESCE(excluded.max_cents,game_watches.max_cents)')
+    .run(watchId,userId,key,title,currency,maxCents,Date.now());
+  return watchId;
+}
+function watchGameList(db,userId){
+  return db.prepare('SELECT * FROM game_watches WHERE user_id=? ORDER BY created_at DESC LIMIT 25').all(userId);
+}
+
+module.exports={openDb,upsertOffer,getOffer,recentDeals,freeGames,watchList,setSource,getGuild,setGuild,backupDb,enqueueDelivery,dueDeliveries,deliveryResult,discardDelivery,queueStats,getGuildStats,upsertGameWatch,watchGameList};
