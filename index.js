@@ -44,13 +44,13 @@ const initializedSources = new Set(db.prepare("SELECT key FROM meta WHERE key LI
 function log(...args) { console.log(new Date().toISOString(), ...args); }
 function btn(id, label, style=ButtonStyle.Secondary, emoji) { return new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setEmoji(emoji || '🎮'); }
 function rows(...buttons) { return buttons.map((b,i)=>({b,i})).reduce((acc,{b,i})=>{ if (i%5===0) acc.push(new ActionRowBuilder()); acc[acc.length-1].addComponents(b); return acc; },[]); }
-function menu() {
+function menu(dealsChannelId=null) {
   const embed = new EmbedBuilder().setColor(0x274667)
     .setTitle('🏷️ GameDeals • Central de Ofertas')
     .setDescription('**Encontre a melhor oferta para jogar.**\n\n' +
       'Confira descontos, pesquise jogos e acompanhe os preços que importam para você. ' +
       'As consultas e listas pessoais são privadas.\n\n' +
-      '📢 Novas promoções são publicadas em <#' + (process.env.GAMEDEALS_DEALS_CHANNEL_ID||'0') + '> quando o servidor está configurado.\n' +
+      (dealsChannelId?'📢 **Notificações automáticas:** <#'+dealsChannelId+'>\n':'📢 Notificações automáticas no canal de promoções do servidor.\n') +
       '🔄 Valores e disponibilidade devem ser confirmados na loja antes da compra.')
     .setFooter({text:'GameDeals • Menu principal • v0.9 • Central de Ofertas'});
   return {embeds:[embed],components:[
@@ -105,7 +105,7 @@ async function ensureGuild(guild) {
       message = recent.find(m=>m.author.id===client.user.id && m.embeds.some(e=>e.footer?.text?.includes('GameDeals • Menu principal')));
     } catch {}
   }
-  if (message) await message.edit(menu()); else message = await central.send(menu());
+  if (message) await message.edit(menu(deals.id)); else message = await central.send(menu(deals.id));
   if (me.permissions.has(PermissionFlagsBits.ManageMessages)) {
     try { if (!message.pinned) await message.pin(); } catch {}
   }
