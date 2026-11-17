@@ -46,6 +46,8 @@ function openDb(dir = process.env.DATA_DIR || path.join(process.cwd(), 'data')) 
       update.run(engine.gameKey(o),o.offer_key);
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_offers_game ON offers(game_key,currency)');
+  const sourceColumns=db.prepare('PRAGMA table_info(sources)').all().map(col=>col.name);
+  if(!sourceColumns.includes('last_success_at'))db.exec('ALTER TABLE sources ADD COLUMN last_success_at INTEGER');
   const columns = db.prepare('PRAGMA table_info(guilds)').all().map(col => col.name);
   if (!columns.includes('max_price_cents')) db.exec('ALTER TABLE guilds ADD COLUMN max_price_cents INTEGER');
   return db;
@@ -66,7 +68,7 @@ function getOffer(db, key) { return db.prepare('SELECT * FROM offers WHERE offer
 function recentDeals(db, minDiscount = 0, limit = 15) { return db.prepare("SELECT * FROM offers WHERE source='steam' AND discount>=? AND price_cents>0 AND seen_at>? ORDER BY discount DESC, seen_at DESC LIMIT ?").all(minDiscount, Date.now()-2*86400000, limit); }
 function freeGames(db, limit = 15) { return db.prepare("SELECT * FROM offers WHERE source='epic' AND price_cents=0 AND seen_at>? AND (expires_at IS NULL OR expires_at>?) ORDER BY seen_at DESC LIMIT ?").all(Date.now()-2*86400000,new Date().toISOString(),limit); }
 function watchList(db, userId) { return db.prepare('SELECT w.offer_key,w.target_cents,o.title,o.price_cents,o.currency,o.discount,o.url,o.source FROM watchlist w JOIN offers o ON o.offer_key=w.offer_key WHERE w.user_id=? ORDER BY w.created_at DESC LIMIT 25').all(userId); }
-function setSource(db, source, count, error = null) { db.prepare('INSERT INTO sources(source,checked_at,last_error,item_count) VALUES(?,?,?,?) ON CONFLICT(source) DO UPDATE SET checked_at=excluded.checked_at,last_error=excluded.last_error,item_count=excluded.item_count').run(source,Date.now(),error,count); }
+function setSource(db, source, count, error = null) { const now=Date.now();db.prepare('INSERT INTO sources(source,checked_at,last_error,item_count,last_success_at) VALUES(?,?,?,?,?) ON CONFLICT(source) DO UPDATE SET checked_at=excluded.checked_at,last_error=excluded.last_error,item_count=excluded.item_count,last_success_at=CASE WHEN excluded.last_error IS NULL THEN excluded.last_success_at ELSE sources.last_success_at END').run(source,now,error,count,error?null:now); }
 function getGuild(db,id) { return db.prepare('SELECT * FROM guilds WHERE guild_id=?').get(id); }
 function setGuild(db,id,menuChannel,dealsChannel,menuMessage) { db.prepare('INSERT INTO guilds(guild_id,menu_channel,deals_channel,menu_message) VALUES(?,?,?,?) ON CONFLICT(guild_id) DO UPDATE SET menu_channel=excluded.menu_channel,deals_channel=excluded.deals_channel,menu_message=excluded.menu_message').run(id,menuChannel,dealsChannel,menuMessage); }
 async function backupDb(db, dir=process.env.DATA_DIR || path.join(process.cwd(),'data')) {
@@ -103,7 +105,7 @@ function getGuildStats(db){
     watchers:db.prepare('SELECT COUNT(*) n FROM watchlist').get().n,
     gameWatches:db.prepare('SELECT COUNT(*) n FROM game_watches').get().n,
     pricePoints:db.prepare('SELECT COUNT(*) n FROM price_history').get().n,
-    sources:db.prepare('SELECT source,checked_at,last_error,item_count FROM sources ORDER BY source').all(),
+    sources:db.prepare('SELECT source,checked_at,last_success_at,last_error,item_count FROM sources ORDER BY source').all(),
     queue:queueStats(db)
   };
 }
@@ -114,8 +116,14 @@ function upsertGameWatch(db,{userId,key,title,currency,maxCents=null}){
     .run(watchId,userId,key,title,currency,maxCents,Date.now());
   return watchId;
 }
+function retryFailedDeliveries(db,now=Date.now()){
+  return db.prepare("UPDATE delivery_queue SET status='pending',attempts=0,next_attempt_at=?,last_error=NULL WHERE status='failed'").run(now).changes;
+}
+function pruneDeliveryHistory(db,now=Date.now()){
+  return db.prepare("DELETE FROM delivery_queue WHERE status IN ('delivered','discarded') AND created_at<?").run(now-90*86400000).changes;
+}
 function watchGameList(db,userId){
   return db.prepare('SELECT * FROM game_watches WHERE user_id=? ORDER BY created_at DESC LIMIT 25').all(userId);
 }
 
-module.exports={openDb,upsertOffer,getOffer,recentDeals,freeGames,watchList,setSource,getGuild,setGuild,backupDb,enqueueDelivery,dueDeliveries,deliveryResult,discardDelivery,queueStats,getGuildStats,upsertGameWatch,watchGameList};
+module.exports={openDb,upsertOffer,getOffer,recentDeals,freeGames,watchList,setSource,getGuild,setGuild,backupDb,enqueueDelivery,dueDeliveries,deliveryResult,discardDelivery,queueStats,getGuildStats,upsertGameWatch,watchGameList,retryFailedDeliveries,pruneDeliveryHistory};
