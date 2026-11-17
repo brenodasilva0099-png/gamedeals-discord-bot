@@ -8,6 +8,7 @@ const {
 const dbApi = require('./db');
 const stores = require('./store');
 const shark = require('./cheapshark');
+const engine=require('./deal-engine');
 const {coverFor} = require('./media');
 const {startLiveServer} = require('./live/server');
 const {ensureEntryPoint} = require('./live/entry-point');
@@ -355,8 +356,9 @@ async function onButton(i) {
   if(id==='gd:help') return interactionReply(i,{embeds:[intro('❓ Como usar','**Pesquisar:** busca na Steam e em lojas autorizadas com capas e abre a ficha com banner; `/buscar` sugere jogos enquanto você digita.\n**Acompanhar:** salva o produto na sua lista pessoal.\n**Definir alerta:** você recebe DM se o bot identificar um preço igual ou abaixo do limite (quando DMs são permitidas).\n**Jogos grátis:** resgates temporários encontrados na Epic Games.\n**Histórico:** evolução dos preços registrados pelo bot.\n**Comparar lojas:** mostra somente valores realmente consultados para o mesmo título e edição.\n\nOutras lojas vêm do CheapShark em USD. Nuuvem e Instant Gaming ainda não estão conectadas. Não enviamos ofertas fictícias nem prometemos cobertura de todas as lojas.')]});
   if(id==='gd:status') {
     const states=db.prepare('SELECT * FROM sources').all();
-    const status=states.length?states.map(s=>`${s.source==='steam'?'Steam':s.source==='epic'?'Epic':'Outras lojas (CheapShark)'}: ${s.last_error?'⚠️ '+short(s.last_error,90):'✅ OK'} • ${s.item_count} itens • <t:${Math.floor(s.checked_at/1000)}:R>`).join('\n'):'Coleta ainda não iniciada.';
-    return interactionReply(i,{embeds:[intro('📡 Estado do monitor',`${status}\n\nVerificações gerais a cada **${POLL_MS/60000} minutos**, com até **${WISHLIST_CHECK_LIMIT}** jogos acompanhados revisados por ciclo. Os horários refletem a coleta, não necessariamente a atualização da loja.`)]});
+    const counts=Object.fromEntries(dbApi.queueStats(db).map(x=>[x.status,x.n]));
+     const status=states.length?states.map(s=>`${s.source==='steam'?'Steam':s.source==='epic'?'Epic':'Outras lojas (CheapShark)'}: ${s.last_error?'⚠️ '+short(s.last_error,90):'✅ OK'} • ${s.item_count} itens • <t:${Math.floor(s.checked_at/1000)}:R>`).join('\n'):'Coleta ainda não iniciada.';
+    return interactionReply(i,{embeds:[intro('📡 Estado do monitor',`${status}\n\nVerificações gerais a cada **${POLL_MS/60000} minutos**, com até **${WISHLIST_CHECK_LIMIT}** jogos acompanhados revisados por ciclo. Os horários refletem a coleta, não necessariamente a atualização da loja.\n\n📬 **Fila:** ${counts.pending||0} pendentes · ${counts.delivered||0} entregues · ${counts.failed||0} com falhas.`)]});
   }
   if(id==='gd:wishlist') {
     const list=dbApi.watchList(db,i.user.id);
@@ -465,34 +467,55 @@ client.on('interactionCreate',async i=>{
   catch(e){log('Falha na interação',i.customId,e.stack||e.message);try{if(i.deferred||i.replied)await i.editReply({content:'Ocorreu um erro temporário. Tente novamente.'});else await i.reply({content:'Ocorreu um erro temporário. Tente novamente.',flags:MessageFlags.Ephemeral});}catch{}}
 });
 
-async function announce(o) {
-  const guilds=db.prepare('SELECT * FROM guilds WHERE enabled=1 AND deals_channel IS NOT NULL').all();
-  for(const g of guilds) {
-    if(o.source!=='epic' && o.discount<g.min_discount)continue;
-    if(g.max_price_cents!==null && (o.currency!=='BRL'||o.priceCents>g.max_price_cents))continue;
-    if(o.source==='epic' && o.price_cents!==0)continue;
-    if(db.prepare('SELECT 1 FROM notifications WHERE guild_id=? AND offer_key=? AND price_cents=?').get(g.guild_id,o.key,o.priceCents))continue;
-    try {
-      const channel=await client.channels.fetch(g.deals_channel);
-      if(!channel?.isTextBased())continue;
-      await channel.send({embeds:[offerEmbed({offer_key:o.key,title:o.title,url:o.url,price_cents:o.priceCents,original_cents:o.originalCents,currency:o.currency,discount:o.discount,source:o.source,kind:o.kind,image:o.image,expires_at:o.expiresAt})],components:[shopLink(o)]});
-      db.prepare('INSERT OR IGNORE INTO notifications(guild_id,offer_key,price_cents,delivered_at) VALUES(?,?,?,?)').run(g.guild_id,o.key,o.priceCents,Date.now());
-      await new Promise(r=>setTimeout(r,1000));
-    } catch(e){log('Falha ao notificar servidor',g.guild_id,e.message);}
+// v0.6: fila transacional persistente. Falhas de rede sao reprocessadas.
+function queueNotifications(o){
+  if(!engine.validOffer(o))return 0;
+  const saved=dbApi.getOffer(db,o.key);if(!saved)return 0;
+  const now=Date.now(),changedAt=saved.changed_at;
+  let count=0;
+  for(const g of db.prepare('SELECT * FROM guilds WHERE enabled=1 AND deals_channel IS NOT NULL').all()){
+    if(!engine.eligibleGuild(o,g))continue;
+    dbApi.enqueueDelivery(db,{id:engine.queueId('guild',g.guild_id,o.key,changedAt),type:'guild',target:g.guild_id,offerKey:o.key,priceCents:o.priceCents,createdAt:now});
+    count++;
   }
+  for(const w of db.prepare('SELECT user_id FROM watchlist WHERE offer_key=? AND target_cents IS NOT NULL AND target_cents>=?').all(o.key,o.priceCents)){
+    dbApi.enqueueDelivery(db,{id:engine.queueId('dm',w.user_id,o.key,changedAt),type:'dm',target:w.user_id,offerKey:o.key,priceCents:o.priceCents,createdAt:now});
+    count++;
+  }
+  return count;
 }
-
-async function notifyWatchers(o) {
-  if(!['BRL','USD'].includes(o.currency))return;
-  const users=db.prepare('SELECT user_id FROM watchlist WHERE offer_key=? AND target_cents IS NOT NULL AND target_cents>=?').all(o.key,o.priceCents);
-  for(const {user_id} of users){
-    if(db.prepare('SELECT 1 FROM dm_notifications WHERE user_id=? AND offer_key=? AND price_cents=?').get(user_id,o.key,o.priceCents))continue;
-    try {
-      const u=await client.users.fetch(user_id);
-      await u.send({content:`🔔 Seu alerta de preço foi atingido!`,embeds:[offerEmbed({offer_key:o.key,title:o.title,url:o.url,price_cents:o.priceCents,original_cents:o.originalCents,currency:o.currency,discount:o.discount,source:o.source,kind:o.kind,image:o.image,expires_at:o.expiresAt})],components:[shopLink(o)]});
-      db.prepare('INSERT OR IGNORE INTO dm_notifications(user_id,offer_key,price_cents,delivered_at) VALUES(?,?,?,?)').run(user_id,o.key,o.priceCents,Date.now());
-    } catch(e){log('Não foi possível enviar DM',user_id,e.message);}
+async function deliverQueue(){
+  let delivered=0;
+  for(const task of dbApi.dueDeliveries(db,15)){
+    const o=dbApi.getOffer(db,task.offer_key);
+    if(!o||!engine.validOffer(o)||o.price_cents!==task.price_cents){
+      dbApi.discardDelivery(db,task.id,'Oferta encerrada, expirada ou com preco alterado');continue;
+    }
+    try{
+      if(task.target_type==='guild'){
+        const g=dbApi.getGuild(db,task.target_id);
+        if(!g?.deals_channel||!engine.eligibleGuild(o,g)){
+          dbApi.discardDelivery(db,task.id,'Preferencias do servidor alteradas');continue;
+        }
+        const channel=await client.channels.fetch(g.deals_channel);
+        if(!channel?.isTextBased())throw Error('Canal de ofertas inacessivel');
+        await channel.send({embeds:[offerEmbed(o)],components:[shopLink(o)]});
+        db.prepare('INSERT OR IGNORE INTO notifications(guild_id,offer_key,price_cents,delivered_at) VALUES(?,?,?,?)').run(g.guild_id,o.offer_key,o.price_cents,Date.now());
+      }else{
+        const w=db.prepare('SELECT 1 FROM watchlist WHERE user_id=? AND offer_key=? AND target_cents>=?').get(task.target_id,o.offer_key,o.price_cents);
+        if(!w){dbApi.discardDelivery(db,task.id,'Alerta removido');continue;}
+        const user=await client.users.fetch(task.target_id);
+        await user.send({content:'🔔 Seu alerta de preço foi atingido!',embeds:[offerEmbed(o)],components:[shopLink(o)]});
+        db.prepare('INSERT OR IGNORE INTO dm_notifications(user_id,offer_key,price_cents,delivered_at) VALUES(?,?,?,?)').run(task.target_id,o.offer_key,o.price_cents,Date.now());
+      }
+      dbApi.deliveryResult(db,task.id,true);delivered++;
+      await new Promise(resolve=>setTimeout(resolve,350));
+    }catch(err){
+      dbApi.deliveryResult(db,task.id,false,err.message,Date.now(),engine.retryDelay(task.attempts+1));
+      log('Aviso pendente de nova tentativa',task.target_type,task.target_id,err.message);
+    }
   }
+  return delivered;
 }
 
 async function refreshWatchlist() {
@@ -508,7 +531,7 @@ async function refreshWatchlist() {
       const old=dbApi.getOffer(db,offer_key);
       if(fresh && old){
         const updated={key:old.offer_key,title:old.title,source:'steam',kind:'app',url:old.url,image:old.image,currency:fresh.currency,originalCents:fresh.originalCents,priceCents:fresh.priceCents,discount:fresh.discount,expiresAt:null};
-        if(dbApi.upsertOffer(db,updated))await notifyWatchers(updated);
+        if(dbApi.upsertOffer(db,updated))queueNotifications(updated);
       }
     }catch(err){log('Falha ao verificar jogo acompanhado',offer_key,err.message);}
     await new Promise(resolve=>setTimeout(resolve,700));
@@ -524,7 +547,7 @@ async function poll() {
         const offers=await reader();let updated=0;
         for(const o of offers){
           const changed=dbApi.upsertOffer(db,o);
-          if(changed){updated++;if(initializedSources.has(source)){await announce(o);await notifyWatchers(o);}}
+          if(changed){updated++;if(initializedSources.has(source))queueNotifications(o);}
         }
         dbApi.setSource(db,source,offers.length);
         if(!initializedSources.has(source)){
@@ -546,8 +569,8 @@ async function poll() {
           if(dbApi.upsertOffer(db,o)){
             changedCount++;
             if(initializedSources.has('cheapshark')) {
-              if(sent<6){await announce(o);sent++;}
-              await notifyWatchers(o);
+              if(sent<6){queueNotifications(o);sent++;}
+              // Alertas multiloja tratados pela lista de jogos da v0.8.
             }
           }
         }
@@ -561,6 +584,7 @@ async function poll() {
       } catch(e){dbApi.setSource(db,'cheapshark',0,e.message);log('Falha no CheapShark',e.message);}
     }
     await refreshWatchlist();
+    await deliverQueue();
   }finally{pollActive=false;}
 }
 
