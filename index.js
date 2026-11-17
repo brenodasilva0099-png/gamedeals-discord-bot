@@ -45,14 +45,33 @@ function log(...args) { console.log(new Date().toISOString(), ...args); }
 function btn(id, label, style=ButtonStyle.Secondary, emoji) { return new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setEmoji(emoji || '🎮'); }
 function rows(...buttons) { return buttons.map((b,i)=>({b,i})).reduce((acc,{b,i})=>{ if (i%5===0) acc.push(new ActionRowBuilder()); acc[acc.length-1].addComponents(b); return acc; },[]); }
 function menu() {
-  const embed = new EmbedBuilder().setColor(0x274667).setTitle('🎮 GameDeals • Central de jogos')
-    .setDescription('**Bem-vindo à sua central de promoções!**\n\nPesquise jogos, consulte descontos, acompanhe preços e veja os jogos grátis. Clique em uma opção abaixo. Sua navegação é privada: outras pessoas não verão suas pesquisas.\n\n🔄 Dados obtidos de fontes externas e atualizados periodicamente. Preços e disponibilidade devem ser confirmados na loja antes da compra.')
-    .addFields({name:'📢 Notificações automáticas',value:'São enviadas no canal **#promocoes-de-jogos**.',inline:false})
-    .setFooter({text:'GameDeals • Menu principal • v0.9 • Navegação por botões'});
-  return { embeds:[embed], components:[
-    ...rows(btn('gd:offers','Ofertas',ButtonStyle.Primary,'🏷️'),btn('gd:search','Pesquisar',ButtonStyle.Primary,'🔎'),btn('gd:free','Jogos grátis',ButtonStyle.Success,'🎁'),btn('gd:wishlist','Meus desejos',ButtonStyle.Secondary,'❤️'),btn('gd:history','Histórico',ButtonStyle.Secondary,'📈')),
-    ...rows(btn('gd:partners','Outras lojas',ButtonStyle.Primary,'🏬'),btn('gd:bundles','Pacotes',ButtonStyle.Secondary,'📦'),btn('gd:status','Status',ButtonStyle.Secondary,'📡'),btn('gd:settings','Administração',ButtonStyle.Secondary,'⚙️'),btn('gd:help','Ajuda',ButtonStyle.Secondary,'❓')),
-    ...rows(btn('gd:live','Transmitir tela',ButtonStyle.Primary,'📺'))
+  const embed = new EmbedBuilder().setColor(0x274667)
+    .setTitle('🏷️ GameDeals • Central de Ofertas')
+    .setDescription('**Encontre a melhor oferta para jogar.**\n\n' +
+      'Confira descontos, pesquise jogos e acompanhe os preços que importam para você. ' +
+      'As consultas e listas pessoais são privadas.\n\n' +
+      '📢 Novas promoções são publicadas em <#' + (process.env.GAMEDEALS_DEALS_CHANNEL_ID||'0') + '> quando o servidor está configurado.\n' +
+      '🔄 Valores e disponibilidade devem ser confirmados na loja antes da compra.')
+    .setFooter({text:'GameDeals • Menu principal • v0.9 • Central de Ofertas'});
+  return {embeds:[embed],components:[
+    new ActionRowBuilder().addComponents(
+      btn('gd:offers','Ofertas',ButtonStyle.Primary,'🏷️'),
+      btn('gd:search','Pesquisar',ButtonStyle.Primary,'🔎'),
+      btn('gd:free','Jogos grátis',ButtonStyle.Success,'🎁'),
+      btn('gd:wishlist','Meus desejos',ButtonStyle.Secondary,'❤️'),
+      btn('gd:live','Transmitir',ButtonStyle.Secondary,'📺')
+    ),
+    new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+      .setCustomId('gd:nav')
+      .setPlaceholder('📂 Mais opções — lojas, histórico e configurações')
+      .addOptions([
+        {label:'Outras lojas',value:'partners',description:'Ofertas de lojas parceiras',emoji:'🏬'},
+        {label:'Pacotes',value:'bundles',description:'Promoções em bundles e pacotes',emoji:'📦'},
+        {label:'Histórico de preços',value:'history',description:'Veja a evolução do preço dos jogos',emoji:'📈'},
+        {label:'Status do monitor',value:'status',description:'Últimas consultas e avisos',emoji:'📡'},
+        {label:'Administração',value:'settings',description:'Configurações do servidor (admins)',emoji:'⚙️'},
+        {label:'Ajuda',value:'help',description:'Como usar a central e seus alertas',emoji:'❓'}
+      ]))
   ]};
 }
 
@@ -63,14 +82,21 @@ async function ensureGuild(guild) {
   const all = await guild.channels.fetch();
   let central = saved?.menu_channel && all.get(saved.menu_channel);
   let deals = saved?.deals_channel && all.get(saved.deals_channel);
-  if (!central) central = all.find(c=>c?.name==='central-de-jogos' && c.type===ChannelType.GuildText);
+  if (!central) central = all.find(c=>c?.name==='central-de-ofertas' && c.type===ChannelType.GuildText)
+    || all.find(c=>c?.name==='central-de-jogos' && c.type===ChannelType.GuildText);
   if (!deals) deals = all.find(c=>c?.name==='promocoes-de-jogos' && c.type===ChannelType.GuildText);
   if ((!central || !deals) && !me.permissions.has(PermissionFlagsBits.ManageChannels)) {
-    log(`Preciso da permissão Gerenciar Canais no servidor ${guild.name}, ou dos canais central-de-jogos e promocoes-de-jogos criados manualmente.`); return;
+    log(`Preciso da permissão Gerenciar Canais no servidor ${guild.name}, ou dos canais central-de-ofertas e promocoes-de-jogos criados manualmente.`); return;
   }
-  if (!central) central = await guild.channels.create({name:'central-de-jogos',type:ChannelType.GuildText,topic:'Painel interativo permanente do GameDeals. Use os botões.'});
+  if (!central) central = await guild.channels.create({name:'central-de-ofertas',type:ChannelType.GuildText,topic:'GameDeals • Central de Ofertas: promoções, pesquisa e alertas de preço.'});
   if (!deals) deals = await guild.channels.create({name:'promocoes-de-jogos',type:ChannelType.GuildText,topic:'Notificações automáticas de descontos e jogos grátis.'});
   if (!central.isTextBased() || !deals.isTextBased()) return;
+  // Renomeia apenas o antigo canal padrao. Nunca sobrescreve nomes personalizados.
+  // Conserva ID, permissoes, historico de mensagens e a mensagem pinada.
+  if (central.name==='central-de-jogos' && me.permissions.has(PermissionFlagsBits.ManageChannels)) {
+    try {await central.setName('central-de-ofertas','GameDeals • Central de Ofertas');}
+    catch(err){log('Não foi possível renomear #central-de-jogos:',err.message);}
+  }
   let message = null;
   if (saved?.menu_message) { try { message = await central.messages.fetch(saved.menu_message); } catch {} }
   if (!message) {
@@ -346,8 +372,8 @@ async function interactionReply(interaction, data) {
 }
 function canAdmin(i){return Boolean(i.memberPermissions?.has(PermissionFlagsBits.ManageGuild));}
 
-async function onButton(i) {
-  const id=i.customId;
+async function onButton(i,routeId=i.customId) {
+  const id=routeId;
   if(id.startsWith('gd:sort:')||id.startsWith('gd:searchreset:')){
      const parts=id.split(':'),token=parts[2],session=searchSessions.get(token);
      if(!session||session.userId!==i.user.id||Date.now()-session.createdAt>SEARCH_SESSION_TTL)
@@ -496,6 +522,12 @@ async function onButton(i) {
 
 async function onSelect(i) {
   const id=i.customId,val=i.values[0];
+  if(id==='gd:nav'){
+    // Rotas fixas e confiaveis; nao permitir customId arbitrario vindo de seletores.
+    const allowed=new Set(['partners','bundles','history','status','settings','help']);
+    if(!allowed.has(val))return interactionReply(i,{content:'Opção não reconhecida. Abra o painel novamente.'});
+    return onButton(i,'gd:'+val);
+  }
   if(id.startsWith('gd:filters:')){
      const token=id.slice('gd:filters:'.length),session=searchSessions.get(token);
      if(!session||session.userId!==i.user.id||Date.now()-session.createdAt>SEARCH_SESSION_TTL)
