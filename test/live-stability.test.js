@@ -34,7 +34,7 @@ test('servidor entrega worker e repassa pedidos de keyframe somente ao transmiss
     // Verificar a rota do worker sem abrir uma conexao HTTP keep-alive durante
     // o teste WebSocket (isso pode impedir o servidor de encerrar em CI).
     const serverSource=fs.readFileSync(path.join(__dirname,'../live/server.js'),'utf8');
-    assert.match(serverSource,/capture-worker\\.js/);
+    assert.ok(serverSource.includes("capture-worker.js"));
     const workerSource=fs.readFileSync(path.join(__dirname,'../live/public/capture-worker.js'),'utf8');
     assert.match(workerSource,/MediaStreamTrackProcessor/);
     await Promise.all([once(host,'open'),once(viewer,'open')]);
@@ -57,7 +57,12 @@ test('servidor entrega worker e repassa pedidos de keyframe somente ao transmiss
     viewer.send(JSON.stringify({type:'request-keyframe'}));
     await keyframe;
   }finally{
-    host.terminate();viewer.terminate();await app.close();
+    for(const socket of [host,viewer]){
+      // Evita esconder uma falha real do teste ao terminar um WebSocket ainda em CONNECTING.
+      if(socket.readyState===WebSocket.CONNECTING)socket.once('error',()=>{});
+      socket.terminate();
+    }
+    await app.close();
     if(old===undefined)delete process.env.ACTIVITY_PUBLIC_URL;
     else process.env.ACTIVITY_PUBLIC_URL=old;
   }
