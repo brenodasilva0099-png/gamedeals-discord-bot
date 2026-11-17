@@ -401,7 +401,7 @@ async function onButton(i) {
       '**Acompanhamentos:** '+summary.watchers+' individuais; '+summary.gameWatches+' multiloja.\n'+
       '**Fila de alertas:** '+(queue.pending||0)+' pendentes; '+(queue.delivered||0)+' entregues; '+(queue.failed||0)+' com falha.\n'+
       '**Itens vistos nos últimos 2 dias:** '+catalog+'\n\n**Fontes:**\n'+(sources||'Coleta ainda não iniciada.')+
-      '\n\n*Valores correspondem ao banco local deste bot; não são estatísticas globais das lojas.*')]}]});
+      '\n\n*Valores correspondem ao banco local deste bot; não são estatísticas globais das lojas.*')]});
   }
   if(id==='gd:retryfailed'){
     if(!canAdmin(i))return interactionReply(i,{content:'Somente administradores podem reenviar notificações.'});
