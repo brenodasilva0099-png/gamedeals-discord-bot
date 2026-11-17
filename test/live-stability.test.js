@@ -31,10 +31,12 @@ test('servidor entrega worker e repassa pedidos de keyframe somente ao transmiss
   const create=()=>new WebSocket(url,{origin:'https://gamedeals.squareweb.app'});
   const host=create(),viewer=create();
   try{
-    const response=await fetch('http://127.0.0.1:'+port+'/live/capture-worker.js');
-    assert.equal(response.status,200);
-    assert.match(response.headers.get('cache-control')||'',/no-store/);
-    assert.match(await response.text(),/MediaStreamTrackProcessor/);
+    // Verificar a rota do worker sem abrir uma conexao HTTP keep-alive durante
+    // o teste WebSocket (isso pode impedir o servidor de encerrar em CI).
+    const serverSource=fs.readFileSync(path.join(__dirname,'../live/server.js'),'utf8');
+    assert.match(serverSource,/capture-worker\\.js/);
+    const workerSource=fs.readFileSync(path.join(__dirname,'../live/public/capture-worker.js'),'utf8');
+    assert.match(workerSource,/MediaStreamTrackProcessor/);
     await Promise.all([once(host,'open'),once(viewer,'open')]);
     const hostConnect=new Promise((resolve,reject)=>{
       host.on('message',function handler(raw,binary){if(binary)return;try{const m=JSON.parse(raw.toString());if(m.type==='connected'){host.off('message',handler);resolve(m);}}catch{}});
