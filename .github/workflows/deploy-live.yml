@@ -10,6 +10,7 @@ on:
       - 'test/live.test.js'
       - 'test/live-multistream.test.js'
       - 'test/live-quality.test.js'
+      - 'test/live-stability.test.js'
       - '.github/workflows/deploy-live.yml'
   workflow_dispatch:
 
